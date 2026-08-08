@@ -1,0 +1,46 @@
+# Blueprint da Render: descreve a infra do backend em código.
+# Na Render: New > Blueprint > aponta pro repo. Ela lê este arquivo.
+#
+# O front NÃO está aqui — vai pra Vercel (Root Directory = frontend).
+
+databases:
+  - name: ingressos-db
+    databaseName: ingressos
+    user: ingressos
+    plan: free
+
+services:
+  - type: web
+    name: ingressos-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: "./build.sh"
+    # gunicorn no lugar do runserver: o runserver é single-thread e não
+    # é feito pra produção (o próprio Django avisa isso).
+    startCommand: "gunicorn config.wsgi:application"
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.3"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ingressos-db
+          property: connectionString
+      # generateValue: a Render sorteia um segredo forte e guarda.
+      # Nenhum segredo de produção passa pelo repositório.
+      - key: SECRET_KEY
+        generateValue: true
+      - key: TICKET_SIGNING_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      # O ponto na frente libera qualquer subdomínio de onrender.com.
+      - key: ALLOWED_HOSTS
+        value: ".onrender.com"
+      # sync: false = a Render pergunta o valor no primeiro deploy e não
+      # versiona. Preencher com a URL da Vercel e a chave do TMDb.
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: TMDB_API_KEY
+        sync: false

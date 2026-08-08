@@ -1,0 +1,24 @@
+# Postgres para desenvolvimento local.
+# O backend roda no host (venv) e aponta pra este container via DATABASE_URL.
+# No Dia 6 entra também um service `backend` (bônus "Docker Compose" do enunciado).
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: verzel_ingressos_db
+    environment:
+      POSTGRES_DB: ingressos
+      POSTGRES_USER: ingressos
+      POSTGRES_PASSWORD: ingressos
+    ports:
+      - "5433:5432" # 5433 no host pra não colidir com um Postgres local, se houver
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Sem isto, "container subiu" != "Postgres aceita conexão".
+      test: ["CMD-SHELL", "pg_isready -U ingressos -d ingressos"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
