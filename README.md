@@ -103,8 +103,12 @@ curl -X POST http://127.0.0.1:8000/api/auth/login \
 
 | Ambiente | URL |
 |----------|-----|
-| Front | _(preencher)_ |
-| Back | _(preencher)_ |
+| Front (Vercel) | https://verzel-eventos-ingressos.vercel.app |
+| Back (Render) | https://ingressos-api.onrender.com |
+| Docs da API | https://ingressos-api.onrender.com/api/docs |
+
+> A Render no plano free hiberna após ~15 min sem tráfego. A primeira
+> requisição depois disso pode levar ~50s. Não é bug — é o cold start.
 
 ---
 

@@ -28,6 +28,28 @@
 - **A partir do Dia 1 — escrito à mão por mim:** models de negócio, lógica de reserva,
   no-double-sell (`select_for_update`), geração/assinatura do QR, validação da portaria.
 
+## Bugs que valem contar na defesa
+
+### Dia 0 — "Failed to fetch" no front em produção
+**Sintoma:** front na Vercel mostrava "Sem resposta da API", mas abrir
+`https://ingressos-api.onrender.com/api/health` direto no navegador retornava 200.
+
+**Como isolei:** `curl` com e sem o header `Origin`. Sem `Origin` → 200 normal.
+Com `Origin: https://verzel-eventos-ingressos.vercel.app` → **também 200, mas sem
+o header `access-control-allow-origin`**. A resposta trazia `vary: origin`, o que
+prova que o middleware de CORS rodou e decidiu *não* liberar — logo, a origem não
+estava na allowlist, e não era API fora do ar nem cold start (0,58s de resposta).
+
+**Causa:** `CORS_ALLOWED_ORIGINS` na Render ainda apontava para `http://localhost:3000`,
+valor posto no primeiro deploy antes de a URL da Vercel existir.
+
+**Aprendizado:** o servidor respondeu normalmente; quem barrou foi o **browser**, que
+descartou o corpo antes de o JavaScript vê-lo. Como o `fetch()` nunca chega a receber
+uma resposta, não há status para reportar — daí a mensagem genérica "Failed to fetch".
+Por isso o `curl` funcionava e o site não: curl não aplica same-origin policy.
+CORS não protege o servidor, protege o **usuário** — impede que um site qualquer leia,
+no navegador dele, dados de outra origem em nome dele.
+
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele
 - [ ] Por que HMAC impede forjar o QR (e por que só UUID não impediria)
