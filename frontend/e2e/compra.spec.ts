@@ -57,28 +57,51 @@ test.describe("compra de pista", () => {
     );
   });
 
-  test("o seletor para em 8 e a compra no limite passa", async ({ page }) => {
-    /**
-     * NÃO testa a recusa de pagamento (10 ou mais). A interface limita a
-     * compra a 8 por vez, então esse caminho é inalcançável pela tela — a
-     * regra é do backend e está coberta lá, em PaymentAndStockTest.
-     *
-     * O que este teste garante é o limite do seletor e que comprar NO limite
-     * funciona, que é onde um erro de fronteira apareceria.
-     */
+  test("pagamento confirmado: até 5 ingressos a compra passa", async ({ page }) => {
     await entrar(page, "cliente");
     await abrirEventoDisponivel(page);
 
     const mais = page.getByRole("button", { name: "Aumentar quantidade" });
-    for (let i = 1; i < 12; i++) await mais.click({ force: true }).catch(() => {});
-
-    await expect(page.getByRole("status")).toHaveText("8");
-    await expect(mais).toBeDisabled();
+    for (let i = 1; i < 5; i++) await mais.click();
+    await expect(page.getByRole("status")).toHaveText("5");
 
     await page.getByRole("button", { name: /Reservar ingressos/ }).click();
-    await expect(page.getByText("Confirme sua compra")).toBeVisible();
     await page.getByRole("button", { name: /^Pagar/ }).click();
     await expect(page.getByText("Compra confirmada")).toBeVisible();
+  });
+
+  test("pagamento recusado: 6 ou mais devolve o estoque e explica", async ({ page }) => {
+    /**
+     * O enunciado pede o pagamento simulado "contemplando a confirmação e
+     * também a recusa" — no FRONT. Este caminho já existia no backend, mas
+     * ficou inalcançável pela tela por um tempo: o seletor parava em 8 e a
+     * recusa começava em 10. Este teste existe para que isso não volte.
+     */
+    await entrar(page, "cliente");
+    await abrirEventoDisponivel(page);
+
+    const disponiveis = () =>
+      page.getByText(/disponíve/).innerText().then((s) => Number(s.match(/\d+/)![0]));
+    const antes = await disponiveis();
+
+    const mais = page.getByRole("button", { name: "Aumentar quantidade" });
+    for (let i = 1; i < 6; i++) await mais.click();
+    await expect(page.getByRole("status")).toHaveText("6");
+
+    await page.getByRole("button", { name: /Reservar ingressos/ }).click();
+    await page.getByRole("button", { name: /^Pagar/ }).click();
+
+    // A recusa precisa dizer POR QUE, e oferecer saída.
+    await expect(page.getByText("Pagamento recusado")).toBeVisible();
+    await expect(page.getByText(/aprovação manual/)).toBeVisible();
+    await expect(page.getByText(/voltaram para o estoque/)).toBeVisible();
+
+    await page.getByRole("button", { name: "Escolher outra quantidade" }).click();
+    await expect(page.getByRole("status")).toHaveText("1");
+
+    // E o estoque tem que ter voltado de verdade, não só na mensagem.
+    await page.reload();
+    expect(await disponiveis()).toBe(antes);
   });
 
   test("link compartilhado mostra o ingresso sem revelar o código", async ({ page }) => {

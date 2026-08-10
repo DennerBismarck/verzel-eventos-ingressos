@@ -24,7 +24,12 @@ logger = logging.getLogger(__name__)
 # Regra do pagamento SIMULADO: pedidos grandes são recusados. Determinística
 # de propósito — dá para demonstrar o caminho de falha ao vivo. Uma recusa
 # aleatória tornaria a demonstração irreprodutível.
-LIMITE_RECUSA = 10
+#
+# O valor precisa caber DENTRO do limite do seletor de quantidade da tela
+# (8 por compra). Com o limite em 10, a recusa existia no backend e era
+# inalcançável pela interface — e o enunciado pede as duas respostas do
+# pagamento no front, não só no servidor.
+LIMITE_RECUSA = 6
 
 
 class ReservationError(Exception):

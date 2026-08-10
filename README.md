@@ -131,9 +131,12 @@ Documentação interativa: **`/api/docs`** (Swagger UI, gerado do código via dr
 | POST | `/api/gate/validate` | portaria | Valida: `VALID`, `INVALID`, `ALREADY_USED`, `WRONG_EVENT` |
 
 **Pagamento simulado:** não há transação financeira. A regra é determinística —
-pedidos de **10 ingressos ou mais são recusados** e o estoque volta. Determinística
-de propósito: dá para demonstrar o caminho de falha ao vivo, o que uma recusa
-aleatória não permitiria.
+pedidos de **6 ingressos ou mais são recusados** e o estoque volta na hora.
+
+Determinística de propósito: dá para demonstrar o caminho de falha ao vivo, o
+que uma recusa aleatória não permitiria. E o limite fica **abaixo** do máximo do
+seletor de quantidade (8), para que a recusa seja alcançável pela interface —
+o enunciado pede a confirmação **e** a recusa no front, não só no servidor.
 
 ### Testes
 
@@ -180,10 +183,19 @@ Postgres. **Nada é dublado** — o que estes testes provam é justamente a cost
 entre as pontas, e um mock de `/api/reservations` passaria mesmo com o backend
 recusando a reserva.
 
-Cobrem vitrine, compra, mapa de assentos, portaria, painel do organizador e
-sessão (incluindo a renovação automática do token). A tela da portaria roda
-**também num viewport de celular**, que é onde ela é usada de verdade.
-`npm run test:e2e:ui` abre o modo interativo.
+Cobrem vitrine, compra (confirmação **e** recusa), mapa de assentos, portaria,
+painel do organizador e sessão (incluindo a renovação automática do token). A
+tela da portaria roda **também num viewport de celular**, que é onde ela é usada
+de verdade. `npm run test:e2e:ui` abre o modo interativo.
+
+#### Leitura do QR pela câmera
+
+Fica fora da suíte automática: navegador headless não tem câmera. A verificação
+foi feita alimentando o Chromium com uma **câmera virtual** — um vídeo `.y4m`
+montado a partir de um QR real capturado da própria aplicação — e está
+documentada passo a passo em
+[`frontend/e2e/manual/verificar-camera.md`](frontend/e2e/manual/verificar-camera.md),
+para ser reproduzível em vez de ficar na palavra de quem escreveu.
 
 Exemplo:
 ```bash
