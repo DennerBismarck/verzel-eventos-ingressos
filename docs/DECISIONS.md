@@ -293,6 +293,62 @@ não do produto:
 falha, vale perguntar se o teste mede o que diz medir — foi a mesma pergunta que
 salvou o caso do `force_authenticate` no dia 4.
 
+### Dia 7 — a correção do preço apagou a ordenação da vitrine
+
+O `com_preco_inicial()` nasceu para matar o N+1 do preço em evento de lugar
+marcado: anota `Min("seats__price")`. Como `seats` é relação múltipla, o Django
+monta um `GROUP BY` — e nesse caso ele **descarta o `Meta.ordering`**, senão a
+coluna da ordenação teria de entrar no agrupamento e mudaria o resultado.
+
+Resultado: desde aquela correção, a consulta da vitrine saía **sem `ORDER BY`
+nenhum**. E parecia certa. O Postgres devolvia na ordem de inserção do seed,
+que por acaso é cronológica. Nada disso é garantia: sem `ORDER BY` o plano pode
+mudar com o volume, e numa lista **paginada** isso faz a página 2 repetir
+linhas da 1 e sumir com outras.
+
+Escrevi dois testes, porque um só passaria por sorte: um afirma a ordem
+cronológica na vitrine; o outro olha o SQL e exige que exista `ORDER BY`. Sem o
+segundo, o primeiro passaria por acidente sempre que o banco devolvesse na
+ordem de inserção — que é exatamente o que estava acontecendo.
+
+**Aprendizado:** otimização mexe em mais coisa do que o nome sugere. Um
+`annotate()` não é só "uma coluna a mais": ele reescreve a consulta.
+
+### Dia 7 — a vitrine anunciava sessão que já tinha acontecido
+
+O `create_reservation` recusa evento começado desde o primeiro dia ("Este
+evento já começou"). A vitrine, porém, filtrava só por `status=PUBLISHED`. Um
+evento cuja data passasse continuava em "Em cartaz", com botão de comprar, até
+o cliente percorrer o fluxo inteiro e levar o erro no fim.
+
+Nunca apareceu porque o seed só tinha evento futuro. Foi ao adicionar as
+sessões passadas — necessárias para a aba "Já aconteceram" do painel — que o
+bug ficou visível na tela.
+
+A página do evento **continua existindo** por link direto: quem foi à sessão
+ainda tem o link em "Meus ingressos", e devolver 404 apagaria a página do
+próprio evento a que a pessoa foi. Sumir da vitrine e deixar de existir são
+coisas diferentes.
+
+**Aprendizado:** dado de teste que só cobre o caminho feliz esconde bug de
+borda. O seed é código: se ele só produz eventos futuros, a metade do sistema
+que lida com o passado nunca é exercitada.
+
+### Dia 7 — a suíte de E2E falhou inteira, e a culpa não era do código
+
+17 de 17 testes falharam com "elemento não encontrado". O motivo: o Next
+bloqueia o acesso aos próprios chunks de `/_next/static` quando o host da
+requisição não é aquele pelo qual o servidor de dev foi iniciado. Subi em
+`localhost`, o Playwright abre em `127.0.0.1` — outra origem, para o Next.
+
+O sintoma não se parece nada com a causa. Os chunks são bloqueados, o React
+nunca hidrata, nenhuma chamada à API sai, e a tela fica eternamente no
+esqueleto de carregamento. A suíte acusa a aplicação de estar quebrada.
+
+Resolvido com `allowedDevOrigins` no `next.config.ts` — dev-only, não existe em
+produção — em vez de mandar quem for rodar os testes lembrar de subir o
+servidor no host certo.
+
 ## O que eu decidi NÃO construir
 
 Tão importante quanto a lista acima. Cada item abaixo foi considerado, tem

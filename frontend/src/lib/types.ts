@@ -48,6 +48,28 @@ export type OrganizerEvent = PublicEvent & {
   created_at: string;
 };
 
+/**
+ * Cabeçalho do painel. Vem de uma rota própria, e não da soma da lista: a
+ * listagem é paginada de 12 em 12, e somar o que está na tela daria um total
+ * errado — e plausível — para quem tem mais de 12 eventos.
+ */
+export type OrganizerSummary = {
+  /** String, não número: dinheiro nunca trafega como float. */
+  revenue: string;
+  /** Ingressos emitidos, ou seja, só o que já foi pago. */
+  tickets_sold: number;
+  upcoming_count: number;
+  past_count: number;
+  next_event: {
+    id: number;
+    title: string;
+    venue: string;
+    starts_at: string;
+    sold_count: number;
+    capacity: number;
+  } | null;
+};
+
 export type CatalogItem = {
   source: Source;
   external_id: string;

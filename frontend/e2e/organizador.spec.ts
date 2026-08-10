@@ -12,15 +12,46 @@ test.describe("organizador", () => {
     await expect(page.getByRole("progressbar").first()).toBeVisible();
   });
 
+  test("resumo do topo mostra receita, ingressos e o próximo evento", async ({ page }) => {
+    await entrar(page, "organizador");
+
+    await expect(page.getByText("Receita confirmada")).toBeVisible();
+    await expect(page.getByText("Ingressos vendidos")).toBeVisible();
+    await expect(page.getByText("Próximo evento")).toBeVisible();
+    // Dinheiro formatado, e não a string crua da API.
+    await expect(page.getByText(/^R\$\s/).first()).toBeVisible();
+  });
+
+  test("separa futuros de passados e filtra por status", async ({ page }) => {
+    await entrar(page, "organizador");
+
+    // A aba começa nos próximos: o seed tem sessões que já aconteceram, e elas
+    // não podem aparecer aqui.
+    const passado = page.locator("article").filter({ hasText: "Encerrado" });
+    await expect(passado).toHaveCount(0);
+
+    await page.getByRole("button", { name: /Já aconteceram/ }).click();
+    await expect(passado.first()).toBeVisible();
+
+    // O filtro é do SERVIDOR: a lista é paginada, então filtrar na tela só
+    // reordenaria a página atual.
+    await page.getByRole("button", { name: "Próximos" }).click();
+    await page.getByRole("button", { name: "Rascunhos" }).click();
+    // Escopado nas linhas da lista: getByText("Publicado") solto casa por
+    // SUBSTRING e pegava o próprio chip "Publicados" do filtro — o teste
+    // acusaria o app de não filtrar nada.
+    await expect(page.locator("article").filter({ hasText: "Publicado" })).toHaveCount(0);
+    await expect(page.locator("article").filter({ hasText: "Rascunho" }).first()).toBeVisible();
+  });
+
   test("publicar e despublicar muda a vitrine", async ({ page }) => {
     await entrar(page, "organizador");
     const rascunho = page.locator("article").filter({ hasText: "Rascunho" }).first();
     const titulo = await rascunho.getByRole("heading").innerText();
 
     await rascunho.getByRole("button", { name: "Publicar" }).click();
-    await expect(
-      page.locator("article").filter({ hasText: titulo }).getByText("Publicado"),
-    ).toBeVisible();
+    const linha = page.locator("article").filter({ hasText: titulo });
+    await expect(linha.getByText("Publicado")).toBeVisible();
 
     await sair(page);
     await page.goto(`/?q=${encodeURIComponent(titulo.split(" ")[0])}`);
@@ -28,12 +59,16 @@ test.describe("organizador", () => {
 
     // Devolve ao estado do seed, senão o teste da vitrine (que espera o
     // rascunho escondido) passa a falhar dependendo da ordem de execução.
+    //
+    // Despublicar mora atrás do menu de três pontinhos: é a ação que tira o
+    // evento do ar para todo mundo, e ficava colada no botão "Vendas".
     await entrar(page, "organizador");
     await page
       .locator("article")
       .filter({ hasText: titulo })
-      .getByRole("button", { name: "Despublicar" })
+      .getByRole("button", { name: /Mais ações/ })
       .click();
+    await page.getByRole("menuitem", { name: "Despublicar" }).click();
     await expect(
       page.locator("article").filter({ hasText: titulo }).getByText("Rascunho"),
     ).toBeVisible();
