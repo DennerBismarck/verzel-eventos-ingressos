@@ -26,8 +26,10 @@ export function EventCard({ event }: { event: PublicEvent }) {
             src={event.image_url}
             alt=""
             loading="lazy"
-            className="size-full object-cover transition-transform duration-300
-              group-hover:scale-[1.03]"
+            // object-top: cartaz recortado pelo centro corta rosto. O topo é
+            // onde a informação costuma estar.
+            className="size-full object-cover object-top transition-transform
+              duration-300 group-hover:scale-[1.03]"
           />
         ) : (
           <div className="grid size-full place-items-center bg-brand/5 px-4">
@@ -37,10 +39,20 @@ export function EventCard({ event }: { event: PublicEvent }) {
           </div>
         )}
 
+        {/* Véu escuro no rodapé do pôster.
+            O bloco de data ficava sobre a arte crua e, em cartaz claro ou com
+            texto na base, um encostava no outro. O gradiente separa os dois
+            sem esconder a imagem. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t
+            from-ink/80 via-ink/35 to-transparent"
+        />
+
         {/* Bloco de data sobre o pôster — padrão Eventim/Sympla. */}
         <div
           className="absolute bottom-2 left-2 rounded bg-ink/90 px-2 py-1 text-center
-            leading-none text-white backdrop-blur-[2px]"
+            leading-none text-white"
         >
           <span className="block text-base font-bold">{dia}</span>
           <span className="block text-[10px] font-semibold tracking-wider text-white/80">

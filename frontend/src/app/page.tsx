@@ -180,17 +180,25 @@ function Destaque({ event }: { event: PublicEvent }) {
 
   return (
     <section className="mb-8 overflow-hidden rounded-card border border-line bg-white">
-      <div className="grid gap-0 sm:grid-cols-[200px_1fr] md:grid-cols-[240px_1fr]">
-        <div className="relative aspect-[2/3] bg-canvas sm:aspect-auto">
+      {/* Antes o pôster esticava para preencher a altura do texto (aspect-auto)
+          e o object-cover cortava o rosto; sobrava um vazio grande à direita.
+          Agora a imagem mantém 2:3 como no resto da vitrine, e a coluna de
+          texto tem largura máxima para o parágrafo não atravessar a tela. */}
+      <div className="grid gap-0 sm:grid-cols-[176px_1fr] md:grid-cols-[208px_1fr]">
+        <div className="relative aspect-[2/3] bg-canvas">
           {event.image_url ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={event.image_url} alt="" className="size-full object-cover" />
+            <img
+              src={event.image_url}
+              alt=""
+              className="size-full object-cover object-top"
+            />
           ) : (
             <div className="grid size-full place-items-center bg-brand/5" />
           )}
         </div>
 
-        <div className="flex flex-col justify-center gap-3 p-5 md:p-7">
+        <div className="flex max-w-2xl flex-col justify-center gap-3 p-5 md:p-6">
           <div className="flex items-center gap-3">
             <div className="rounded border border-line bg-canvas px-2.5 py-1.5 text-center leading-none">
               <span className="block text-lg font-bold text-ink">{dia}</span>
@@ -204,12 +212,14 @@ function Destaque({ event }: { event: PublicEvent }) {
             </div>
           </div>
 
-          <h2 className="text-2xl font-bold leading-tight text-ink md:text-3xl">
+          <h2 className="text-xl font-bold leading-tight text-ink md:text-2xl">
             {event.title}
           </h2>
 
           {event.description && (
-            <p className="line-clamp-2 max-w-2xl text-sm text-muted">{event.description}</p>
+            <p className="line-clamp-3 text-sm leading-relaxed text-muted">
+              {event.description}
+            </p>
           )}
 
           <div className="mt-1 flex flex-wrap items-center gap-4">
