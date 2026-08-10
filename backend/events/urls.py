@@ -6,6 +6,7 @@ from .views import (
     OrganizerEventViewSet,
     PublicEventDetailView,
     PublicEventListView,
+    PublicEventSeatsView,
 )
 
 # O router gera as 5 rotas REST do ViewSet (list/create/retrieve/update/destroy)
@@ -21,6 +22,7 @@ router.register("organizer/events", OrganizerEventViewSet, basename="organizer-e
 urlpatterns = [
     path("events", PublicEventListView.as_view(), name="event-list"),
     path("events/<int:pk>", PublicEventDetailView.as_view(), name="event-detail"),
+    path("events/<int:pk>/seats", PublicEventSeatsView.as_view(), name="event-seats"),
     path("catalog/search", CatalogSearchView.as_view(), name="catalog-search"),
     path("", include(router.urls)),
 ]

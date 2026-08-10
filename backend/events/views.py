@@ -12,6 +12,7 @@ vazamentos ("esqueci de filtrar status neste if"). Duas classes, dois querysets.
 from django.db.models import Q
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -19,8 +20,15 @@ from rest_framework.views import APIView
 from accounts.permissions import IsOrganizer
 
 from .catalog import CatalogError, get_provider
-from .models import Event
-from .serializers import CatalogItemSerializer, EventPublicSerializer, EventSerializer
+from .models import Event, Seat
+from .serializers import (
+    CatalogItemSerializer,
+    EventPublicSerializer,
+    EventSerializer,
+    SeatLayoutSerializer,
+    SeatSerializer,
+)
+from .services import SeatLayoutError, generate_seats
 
 
 class PublicEventListView(generics.ListAPIView):
@@ -57,6 +65,27 @@ class PublicEventDetailView(generics.RetrieveAPIView):
     queryset = Event.objects.filter(status=Event.Status.PUBLISHED).select_related("organizer")
 
 
+class PublicEventSeatsView(generics.ListAPIView):
+    """
+    Mapa de assentos para o cliente desenhar a tela.
+
+    Devolve o assento e se está livre ou vendido — nunca QUEM comprou. Saber
+    que a poltrona C4 está ocupada é necessário para escolher; saber o nome de
+    quem senta nela não é.
+    """
+
+    serializer_class = SeatSerializer
+    permission_classes = (AllowAny,)
+    pagination_class = None  # o mapa é desenhado inteiro; paginar quebraria a tela
+
+    def get_queryset(self):
+        # Filtra pelo evento E por ele estar publicado: o mapa de um rascunho
+        # não vaza por esta rota.
+        return Seat.objects.filter(
+            event_id=self.kwargs["pk"], event__status=Event.Status.PUBLISHED
+        )
+
+
 class OrganizerEventViewSet(viewsets.ModelViewSet):
     """CRUD dos eventos DO ORGANIZADOR LOGADO."""
 
@@ -71,6 +100,36 @@ class OrganizerEventViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(organizer=self.request.user)
+
+    @extend_schema(request=SeatLayoutSerializer, responses=SeatSerializer(many=True))
+    @action(detail=True, methods=["get", "post"])
+    def seats(self, request, pk=None):
+        """
+        GET  — mapa atual (inclusive de rascunho, por ser o dono).
+        POST — (re)gera o mapa a partir de um layout de seções.
+
+        Fica como ação do ViewSet, e não numa view solta, para herdar o
+        get_queryset: o mapa de um evento alheio devolve 404 de graça.
+        """
+        evento = self.get_object()
+
+        if request.method == "GET":
+            return Response(SeatSerializer(evento.seats.all(), many=True).data)
+
+        entrada = SeatLayoutSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+
+        try:
+            total = generate_seats(event=evento, sections=entrada.validated_data["sections"])
+        except SeatLayoutError as exc:
+            # 409 e não 400: o corpo pode estar perfeito e mesmo assim a ação
+            # ser impossível agora (evento de pista, assentos já vendidos).
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        return Response(
+            {"created": total, "seats": SeatSerializer(evento.seats.all(), many=True).data},
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class CatalogSearchView(APIView):

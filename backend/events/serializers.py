@@ -74,6 +74,19 @@ class SeatSerializer(serializers.ModelSerializer):
         fields = ("id", "section", "row", "number", "price", "status")
 
 
+class SeatSectionSerializer(serializers.Serializer):
+    """Uma seção do mapa: N filas × M lugares, todos ao mesmo preço."""
+
+    name = serializers.CharField(max_length=30)
+    rows = serializers.ListField(child=serializers.CharField(max_length=10), min_length=1)
+    seats_per_row = serializers.IntegerField(min_value=1, max_value=100)
+    price = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+
+
+class SeatLayoutSerializer(serializers.Serializer):
+    sections = SeatSectionSerializer(many=True, min_length=1)
+
+
 class CatalogItemSerializer(serializers.Serializer):
     """Só para o Swagger: o catálogo não tem model por trás, é proxy de API externa."""
 

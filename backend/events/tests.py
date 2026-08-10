@@ -207,6 +207,162 @@ class PainelDoOrganizadorTest(APITestCase):
         self.assertEqual(self.client.get(reverse("event-list")).json()["count"], 1)
 
 
+class MapaDeAssentosTest(APITestCase):
+    def setUp(self):
+        self.org = User.objects.create_user(
+            email="org@b.dev", password=SENHA, full_name="Org", role=User.Role.ORGANIZER
+        )
+        self.outro = User.objects.create_user(
+            email="outro@b.dev", password=SENHA, full_name="Outro", role=User.Role.ORGANIZER
+        )
+        self.cliente = User.objects.create_user(
+            email="cli@b.dev", password=SENHA, full_name="Cli", role=User.Role.CUSTOMER
+        )
+        self.evento = criar_evento(
+            self.org, external_id="s1", title="Teatro", kind=Event.Kind.SEATED, capacity=0
+        )
+        self.url = reverse("organizer-event-seats", args=[self.evento.pk])
+
+    def layout(self, **extra):
+        dados = {
+            "sections": [
+                {"name": "Plateia", "rows": ["A", "B"], "seats_per_row": 4, "price": "80.00"},
+                {"name": "Balcão", "rows": ["C"], "seats_per_row": 3, "price": "50.00"},
+            ]
+        }
+        dados.update(extra)
+        return dados
+
+    def test_gera_o_mapa_e_espelha_a_capacidade(self):
+        self.client.force_authenticate(self.org)
+        r = self.client.post(self.url, self.layout(), format="json")
+
+        self.assertEqual(r.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(r.json()["created"], 11)  # 2x4 + 1x3
+        self.evento.refresh_from_db()
+        # capacity espelha o total para a vitrine e a CheckConstraint valerem
+        # igual nos dois tipos de evento.
+        self.assertEqual(self.evento.capacity, 11)
+        self.assertEqual(self.evento.seats.filter(section="Plateia").count(), 8)
+
+    def test_evento_de_pista_nao_tem_mapa(self):
+        pista = criar_evento(self.org, external_id="p1", kind=Event.Kind.GA)
+        self.client.force_authenticate(self.org)
+        r = self.client.post(
+            reverse("organizer-event-seats", args=[pista.pk]), self.layout(), format="json"
+        )
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("pista", r.json()["detail"].lower())
+
+    def test_regerar_substitui_o_mapa_anterior(self):
+        self.client.force_authenticate(self.org)
+        self.client.post(self.url, self.layout(), format="json")
+        r = self.client.post(
+            self.url,
+            {"sections": [{"name": "Única", "rows": ["A"], "seats_per_row": 2, "price": "10.00"}]},
+            format="json",
+        )
+        self.assertEqual(r.json()["created"], 2)
+        self.assertEqual(self.evento.seats.count(), 2)
+
+    def test_nao_refaz_o_mapa_depois_de_vender(self):
+        """
+        Recriar apagaria a linha que um ingresso emitido aponta. O PROTECT do
+        Ticket.seat barraria de qualquer forma, mas com erro de banco em vez
+        de uma explicação.
+        """
+        from .models import Seat
+
+        self.client.force_authenticate(self.org)
+        self.client.post(self.url, self.layout(), format="json")
+        Seat.objects.filter(event=self.evento).update(status=Seat.Status.SOLD)
+
+        r = self.client.post(self.url, self.layout(), format="json")
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("vendeu", r.json()["detail"])
+
+    def test_posicao_repetida_e_apontada_pelo_nome(self):
+        self.client.force_authenticate(self.org)
+        r = self.client.post(
+            self.url,
+            {
+                "sections": [
+                    {"name": "P", "rows": ["A", "A"], "seats_per_row": 2, "price": "10.00"}
+                ]
+            },
+            format="json",
+        )
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("A1", r.json()["detail"])
+
+    def test_mapa_gigante_e_recusado_antes_de_construir(self):
+        """
+        Um zero a mais no formulário não pode virar um INSERT de milhões.
+
+        A recusa acontece na passada de CONTAGEM, antes de qualquer objeto Seat
+        existir — senão 100 mil objetos seriam alocados só para dizer "não".
+        """
+        self.client.force_authenticate(self.org)
+        secao = lambda i: {  # noqa: E731
+            "name": f"S{i}",
+            "rows": [f"F{r}" for r in range(50)],
+            "seats_per_row": 100,
+            "price": "10.00",
+        }
+        r = self.client.post(
+            self.url, {"sections": [secao(1), secao(2)]}, format="json"
+        )
+        self.assertEqual(r.status_code, status.HTTP_409_CONFLICT)
+        self.assertIn("10000", r.json()["detail"])
+        self.assertEqual(self.evento.seats.count(), 0)
+
+    def test_mapa_de_evento_alheio_devolve_404(self):
+        alheio = criar_evento(self.outro, external_id="s9", kind=Event.Kind.SEATED)
+        self.client.force_authenticate(self.org)
+        r = self.client.post(
+            reverse("organizer-event-seats", args=[alheio.pk]), self.layout(), format="json"
+        )
+        self.assertEqual(r.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_cliente_nao_gera_mapa(self):
+        self.client.force_authenticate(self.cliente)
+        self.assertEqual(
+            self.client.post(self.url, self.layout(), format="json").status_code,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+    def test_mapa_publico_mostra_situacao_mas_nao_o_comprador(self):
+        self.client.force_authenticate(self.org)
+        self.client.post(self.url, self.layout(), format="json")
+        self.client.force_authenticate(None)
+
+        r = self.client.get(reverse("event-seats", args=[self.evento.pk]))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        assento = r.json()[0]
+        self.assertIn("status", assento)
+        # Saber que a poltrona está ocupada é necessário; saber de quem, não.
+        self.assertNotIn("customer", str(assento))
+        self.assertNotIn("reservations", assento)
+
+    def test_mapa_publico_nao_vaza_o_de_um_rascunho(self):
+        self.client.force_authenticate(self.org)
+        self.client.post(self.url, self.layout(), format="json")
+        self.evento.status = Event.Status.DRAFT
+        self.evento.save(update_fields=["status"])
+        self.client.force_authenticate(None)
+
+        self.assertEqual(self.client.get(reverse("event-seats", args=[self.evento.pk])).json(), [])
+
+    def test_mapa_publico_nao_e_paginado(self):
+        """Paginar o mapa desenharia meia sala na tela."""
+        self.client.force_authenticate(self.org)
+        self.client.post(self.url, self.layout(), format="json")
+        self.client.force_authenticate(None)
+        corpo = self.client.get(reverse("event-seats", args=[self.evento.pk])).json()
+        self.assertIsInstance(corpo, list)
+        self.assertEqual(len(corpo), 11)
+
+
 # --------------------------------------------------------------------------
 # Catálogo externo — sempre com a rede dublada
 # --------------------------------------------------------------------------
