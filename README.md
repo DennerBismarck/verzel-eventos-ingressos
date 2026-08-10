@@ -3,8 +3,9 @@
 Desafio Elite Dev (Verzel) — organizador publica eventos a partir de um catálogo externo,
 cliente compra ingressos com QR, portaria valida na entrada.
 
-> **Status:** Dia 0 concluído — scaffold, autenticação JWT com 3 papéis, seed de usuários,
-> deploy configurado. Fluxo de compra em construção.
+> **Status:** Dia 1 — scaffold, autenticação JWT com 3 papéis, deploy configurado,
+> models de evento, catálogo externo (TMDb + Ticketmaster) e painel do organizador.
+> Fluxo de compra em construção.
 > Planejamento em [`docs/PLANNING.md`](docs/PLANNING.md), decisões em [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Stack
@@ -65,6 +66,20 @@ Senha de **todos**: `verzel123`
 `python manage.py seed` é idempotente (rodar de novo não duplica).
 Use `--reset` para recriar do zero.
 
+Também cria **4 eventos de pista** do organizador acima — 3 publicados (120, 80 e
+60 lugares) e 1 em rascunho, para demonstrar o filtro da vitrine. As datas são
+relativas ao dia em que o seed roda, então o seed nunca "vence".
+
+### Chaves das APIs externas
+
+O catálogo externo precisa de chave. **Sem chave a aplicação sobe normalmente** —
+`/api/catalog/search` responde `503` explicando o que falta, em vez de quebrar.
+
+| Variável | Onde obter |
+|----------|-----------|
+| `TMDB_API_KEY` | themoviedb.org/settings/api → "API Key (v3 auth)" |
+| `TICKETMASTER_API_KEY` | developer.ticketmaster.com → criar app → "Consumer Key" |
+
 ---
 
 ## API
@@ -78,6 +93,11 @@ Documentação interativa: **`/api/docs`** (Swagger UI, gerado do código via dr
 | POST | `/api/auth/login` | público | Devolve `access`, `refresh` e os dados do usuário |
 | POST | `/api/auth/refresh` | público | Troca o refresh por um novo access |
 | GET | `/api/auth/me` | autenticado | Dados do usuário do token |
+| GET | `/api/events` | público | Vitrine: eventos publicados. Filtros `?q=` (título/local) e `?kind=` |
+| GET | `/api/events/{id}` | público | Detalhe de evento publicado (rascunho devolve 404) |
+| GET | `/api/catalog/search` | organizador | Busca no catálogo externo. `?source=TMDB\|TICKETMASTER&q=` |
+| GET/POST | `/api/organizer/events` | organizador | Lista/cria os eventos **do organizador logado** |
+| GET/PATCH/DELETE | `/api/organizer/events/{id}` | organizador | Só os próprios (id alheio devolve 404) |
 
 Exemplo:
 ```bash
@@ -129,14 +149,29 @@ O log completo está em [`docs/DECISIONS.md`](docs/DECISIONS.md). Destaques:
 ## Uso de IA
 _(seção obrigatória — preencher ao longo da semana)_
 
-**Ferramenta:** Claude Code (Opus).
+**Ferramenta:** Claude Code (Opus), em pair programming.
 
-**Onde usei IA:** scaffold do Django e do Next, configuração (settings, CORS,
-JWT, WhiteNoise), `render.yaml`, comando de seed, página hello world.
+**Como trabalhei:** a IA escreveu a maior parte do código; eu dirigi as decisões
+de projeto e revisei o que entrou. Em cada ponto de decisão eu recebia as opções
+com os trade-offs e escolhia — as escolhas estão registradas uma a uma em
+[`docs/DECISIONS.md`](docs/DECISIONS.md), com a alternativa que descartei e o
+porquê. Não é um log gerado no fim: foi preenchido enquanto decidia.
 
-**Onde NÃO usei IA (escrito à mão):** _(a preencher — a ideia é: models de
-negócio, lógica de reserva, no-double-sell, geração/assinatura do QR e validação
-da portaria)_.
+**Onde a IA escreveu:** scaffold do Django e do Next, configuração (settings,
+CORS, JWT, WhiteNoise), `render.yaml`, comando de seed, models, clientes das APIs
+externas, serializers e views.
+
+**O que eu fiz sem IA:** as decisões de arquitetura e modelagem listadas no
+`DECISIONS.md` — contador vs. contagem para o estoque, constraint no banco além
+do lock, unicidade do par `(source, external_id)`, separação dos serializers por
+audiência, e a escolha de suportar as duas APIs externas em vez de uma.
+
+**Verificação:** não aceitei código sem exercitá-lo. Cada camada foi testada
+contra o Postgres real antes de virar commit — incluindo a `CheckConstraint`
+(provei que o banco recusa `sold_count > capacity`), as permissões por papel
+(403/401/404 nos casos certos) e a tentativa de forjar `organizer` no corpo do
+request. Dois bugs achados assim estão documentados na seção "Bugs" do
+`DECISIONS.md`.
 
 Artefatos de contexto usados com a IA estão versionados em [`docs/`](docs/).
 

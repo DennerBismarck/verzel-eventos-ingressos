@@ -18,6 +18,16 @@
 | 11 | Config por env var (`django-environ` + `DATABASE_URL`) | Mesmo código em dev e produção; é o formato que Render/Railway entregam pronto | Settings separados por ambiente (mais arquivos, mais chance de divergir) |
 | 12 | Backend na **Render** (blueprint), front na **Vercel** | Vercel é o habitat natural do Next; Render tem free tier com Postgres e lê `render.yaml` versionado | Backend na Vercel como serverless (transação + `select_for_update` fica desconfortável em ambiente efêmero) |
 | 13 | Hello world com ping na API já no Dia 0 | Deploy é o risco menos controlável do prazo; descobrir CORS/env quebrado no Dia 7 seria fatal | Deixar o deploy pro fim (risco concentrado no pior momento) |
+| 14 | Suportar **as duas** APIs externas (TMDb + Ticketmaster) | O enunciado permite as duas. Com dois provedores atrás da mesma interface, a abstração fica *provada* — uma implementação só não demonstra que a costura funciona | Só TMDb (menos trabalho, mas o desacoplamento vira promessa em vez de fato) |
+| 15 | Catálogo devolve **sugestão**, não evento pronto | Filme não tem local nem horário; show tem. Em vez de inventar dado para o filme, `venue`/`starts_at` são opcionais no catálogo e obrigatórios no Event — quem preenche é o organizador | Forçar o mesmo formato nos dois (obrigaria a fabricar data falsa para filmes) |
+| 16 | Backend faz **proxy** da API externa | A chave fica só no servidor. Chamada direta do front colocaria a chave no bundle JavaScript, legível por qualquer visitante | Front chamar TMDb direto (mais rápido, vaza a chave) |
+| 17 | `sold_count` como contador no Event + `CheckConstraint` | O lock do no-double-sell já é na linha do Event; contar Reservations exigiria travar outra tabela. O contador permite a constraint no banco como 2ª camada | Contar `Reservation` a cada leitura (sempre correto, mais caro, e impossibilita a constraint) |
+| 18 | **Sem** `unique(source, external_id)` — só índice | O mesmo filme pode virar dois eventos (sessões em datas diferentes). Unicidade proibiria um caso legítimo do negócio | `unique_together` (trava demais) |
+| 19 | `price` como `DecimalField`, nunca `Float` | Float é binário: `0.10` não tem representação exata e somas acumulam erro em centavos | `FloatField` |
+| 20 | Dois serializers para Event (público / organizador) | O público não vê `sold_count` nem dados do organizador. Um serializer só, escondendo campos por `if`, é onde vaza informação por descuido | Serializer único com lógica condicional |
+| 21 | Autorização do organizador via `get_queryset`, não `if` na view | `Event.objects.filter(organizer=request.user)` faz o objeto alheio simplesmente não existir → 404. Um 403 confirmaria que o evento existe | Checar `obj.organizer == user` depois de buscar (vaza existência via 403) |
+| 22 | Erro do catálogo externo vira **502**, chave ausente vira **503** | Falha de terceiro não pode virar 500 nosso. Os códigos separam "eles caíram" de "falta configurar aqui" | Deixar a exceção subir como 500 (mistura culpa nossa com culpa deles) |
+| 23 | `timeout=6s` em toda chamada externa + cache de 15 min | Sem timeout, uma API lenta prende o worker do gunicorn até morrer — um terceiro derruba a nossa API. O cache poupa cota de requisições | Chamada sem timeout (padrão do `requests` é esperar para sempre) |
 | _ | _(adicione as suas ao longo da semana)_ | | |
 
 ## Uso de IA (rascunho — vira seção do README)
@@ -49,6 +59,28 @@ uma resposta, não há status para reportar — daí a mensagem genérica "Faile
 Por isso o `curl` funcionava e o site não: curl não aplica same-origin policy.
 CORS não protege o servidor, protege o **usuário** — impede que um site qualquer leia,
 no navegador dele, dados de outra origem em nome dele.
+
+### Dia 1 — POST devolvendo 500 em vez de 403
+
+**Sintoma:** `POST /api/organizer/events` com token de **cliente** retornava 500.
+Esperado: 403. O `GET` na mesma rota retornava 301.
+
+**Como isolei:** o traceback não vinha da minha view — vinha de
+`django/middleware/common.py`. A view nem chegou a rodar, então a permission
+class não era a culpada.
+
+**Causa:** o `DefaultRouter` do DRF gera rotas **com barra final**
+(`/organizer/events/`), mas o resto da API é sem (`/api/events`,
+`/api/auth/login`). O `APPEND_SLASH` do Django tenta redirecionar `…/events`
+para `…/events/`; num GET isso é um 301, mas num **POST** ele não consegue
+redirecionar preservando o corpo do request — então levanta `RuntimeError`.
+
+**Correção:** `DefaultRouter(trailing_slash=False)`.
+
+**Aprendizado:** inconsistência de rota não é questão de estilo. Metade da API
+com barra e metade sem transforma um 403 legítimo num 500, e um 500 mascara
+completamente o erro real de permissão. Ler *de onde* vem o traceback (meu
+código ou middleware) foi o que encurtou o diagnóstico.
 
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele

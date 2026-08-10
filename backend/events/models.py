@@ -1,35 +1,144 @@
 """
-Models de evento — ESCRITOS POR DENNER (Dia 1).
+Models de evento e assento.
 
-Referência: docs/PLANNING.md §2. Esboço do que precisa existir:
+Um Event nasce de um item do catálogo externo (TMDb ou Ticketmaster) que o
+organizador escolheu publicar. Guardamos uma CÓPIA dos dados (título, imagem,
+descrição) em vez de consultar a API externa a cada request: o catálogo é
+inspiração, não fonte de verdade. Se o TMDb sair do ar, os eventos publicados
+continuam à venda.
 
-    class Event(models.Model):
-        organizer    -> FK(settings.AUTH_USER_MODEL)
-        source       -> "tmdb" | "ticketmaster"
-        external_id  -> id do item no catálogo externo
-        title, description, image_url, venue, starts_at
-        kind         -> GA (pista) | SEATED (assentos)
-        status       -> draft | published
-        price, capacity, sold_count      # caso GA
-        created_at
-
-    class Seat(models.Model):          # só no Dia 5 (SEATED)
-        event, section, row, number, price, status
-        Meta: unique_together (event, section, row, number)
-
-Pontos que a defesa provavelmente cobra e que valem pensar AGORA:
-
-1. `sold_count` como contador no Event, ou contar Reservations toda vez?
-   (contador = leitura rápida, mas exige disciplina na transação; contar =
-   sempre correto, mas mais caro. Qual você escolhe e por quê?)
-
-2. Uma CONSTRAINT no banco garantindo `sold_count <= capacity`:
-   models.CheckConstraint. Ela é o cinto de segurança — se um dia a lógica
-   Python tiver um furo, o banco recusa. Vale a pena? Argumente.
-
-3. `unique_together` em (source, external_id, organizer)? Um organizador pode
-   publicar o mesmo filme duas vezes em datas diferentes — pense antes de
-   travar demais.
+Dois tipos de evento (`kind`):
+  - GA     (pista)    -> vende QUANTIDADE. Controle em `capacity` / `sold_count`.
+  - SEATED (assentos) -> vende LUGAR. Controle nas linhas de `Seat`.
 """
 
-from django.db import models  # noqa: F401
+from decimal import Decimal
+
+from django.conf import settings
+from django.core.validators import MinValueValidator
+from django.db import models
+
+
+class Event(models.Model):
+    class Source(models.TextChoices):
+        TMDB = "TMDB", "TMDb (filmes)"
+        TICKETMASTER = "TICKETMASTER", "Ticketmaster (shows)"
+
+    class Kind(models.TextChoices):
+        GA = "GA", "Pista (por quantidade)"
+        SEATED = "SEATED", "Lugar marcado"
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Rascunho"
+        PUBLISHED = "PUBLISHED", "Publicado"
+
+    # PROTECT: apagar um organizador que tem eventos vendidos apagaria o
+    # histórico de ingressos junto. O banco recusa e obriga a decidir na mão.
+    organizer = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="events",
+    )
+
+    # --- origem no catálogo externo ---
+    source = models.CharField(max_length=20, choices=Source.choices)
+    # CharField e não Integer: o TMDb usa id numérico, a Ticketmaster usa
+    # string alfanumérica ("G5vYZbJGkdvWZ"). String cobre os dois.
+    external_id = models.CharField(max_length=64)
+
+    # --- dados exibidos (cópia do catálogo, editável pelo organizador) ---
+    title = models.CharField(max_length=200)
+    description = models.TextField(blank=True)
+    image_url = models.URLField(max_length=500, blank=True)
+
+    # --- dados da sessão (o organizador define; o catálogo não tem) ---
+    venue = models.CharField(max_length=200)
+    starts_at = models.DateTimeField()
+
+    kind = models.CharField(max_length=10, choices=Kind.choices, default=Kind.GA)
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        db_index=True,
+    )
+
+    # --- estoque (usado quando kind=GA; em SEATED quem manda são os Seats) ---
+    # DecimalField e nunca FloatField para dinheiro: float é binário e não
+    # representa 0.10 exatamente, então somas acumulam centavos de erro.
+    price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal("0.00"),
+        validators=[MinValueValidator(Decimal("0.00"))],
+    )
+    capacity = models.PositiveIntegerField(default=0)
+    sold_count = models.PositiveIntegerField(default=0)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["starts_at"]
+        indexes = [
+            # A busca do catálogo pergunta "já publiquei este item?".
+            models.Index(fields=["source", "external_id"]),
+            # A vitrine lista publicados em ordem de data.
+            models.Index(fields=["status", "starts_at"]),
+        ]
+        constraints = [
+            # Cinto de segurança do no-double-sell. Se um dia a lógica Python
+            # tiver um furo (bug, script manual, race não coberta), o banco
+            # recusa o INSERT/UPDATE em vez de vender ingresso que não existe.
+            models.CheckConstraint(
+                condition=models.Q(sold_count__lte=models.F("capacity")),
+                name="event_sold_count_lte_capacity",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.get_kind_display()})"
+
+    @property
+    def is_ga(self):
+        return self.kind == self.Kind.GA
+
+    @property
+    def available(self):
+        """Ingressos ainda à venda. Só faz sentido em GA."""
+        return max(self.capacity - self.sold_count, 0)
+
+
+class Seat(models.Model):
+    """Um lugar físico de um evento SEATED. Criado em lote ao publicar."""
+
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Disponível"
+        SOLD = "SOLD", "Vendido"
+
+    # CASCADE aqui (e PROTECT no organizer) porque o assento não existe sem o
+    # evento — é parte dele, não uma entidade independente.
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name="seats")
+    section = models.CharField(max_length=30)
+    row = models.CharField(max_length=10)
+    number = models.PositiveIntegerField()
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(
+        max_length=10,
+        choices=Status.choices,
+        default=Status.AVAILABLE,
+        db_index=True,
+    )
+
+    class Meta:
+        ordering = ["section", "row", "number"]
+        constraints = [
+            # Não existem dois "A-3" na mesma seção do mesmo evento. Esta é a
+            # garantia estrutural; o select_for_update é a garantia temporal.
+            models.UniqueConstraint(
+                fields=["event", "section", "row", "number"],
+                name="seat_unique_position_per_event",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.section} {self.row}{self.number}"
