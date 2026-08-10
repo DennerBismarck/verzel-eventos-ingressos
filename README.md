@@ -138,9 +138,30 @@ que uma recusa aleatória não permitiria. E o limite fica **abaixo** do máximo
 seletor de quantidade (8), para que a recusa seja alcançável pela interface —
 o enunciado pede a confirmação **e** a recusa no front, não só no servidor.
 
+## Segurança
+
+| Medida | Por quê |
+|--------|---------|
+| **Rate limit por escopo** — auth 10/min, gate 120/min, catálogo 30/min | Riscos diferentes. Apertar a portaria atrapalharia uma entrada movimentada; afrouxar o login abre força bruta |
+| **Rotação de refresh + blacklist** | Um refresh vazado só serve até a vítima usar o dela. `POST /api/auth/logout` revoga de verdade |
+| **HSTS, nosniff, X-Frame-Options, Referrer-Policy, SSL redirect** | Só fora de `DEBUG`: HSTS em desenvolvimento prende o navegador em https por um ano |
+| **Permissão padrão `IsAuthenticated`** | Fail closed — esquecer a permissão numa view nova fecha a porta |
+| **Chaves de API só no backend** | `NEXT_PUBLIC_*` vai para o bundle do navegador |
+| **Segredo nunca no log** | O TMDb autentica por query string; `logger.exception` gravaria a chave no traceback |
+| **`select_for_update` + `CheckConstraint`** | Camadas diferentes: lock contra concorrência, constraint contra bug de código |
+
+O access token dura 60 min e a renovação é automática — a janela de abuso de um
+token vazado é curta sem que o usuário seja expulso no meio do checkout.
+
+**Reserva expira em 10 minutos.** Sem prazo, quem fecha a aba no checkout trava
+o lugar para sempre. A expiração roda ao reservar (funciona sem agendador) e no
+comando `python manage.py expirar_reservas` para quem tiver cron.
+
+---
+
 ### Testes
 
-#### Backend — 105 testes
+#### Backend — 119 testes
 
 ```bash
 cd backend && python manage.py test
@@ -148,8 +169,8 @@ cd backend && python manage.py test
 
 | App | Testes | O que cobre |
 |-----|--------|-------------|
-| `ticketing` | 36 | No-double-sell (pista e assento), QR, portaria, vendas |
-| `accounts` | 27 | Login por e-mail, papel no JWT, permissões por papel |
+| `ticketing` | 50 | No-double-sell, QR, portaria, vendas, prazo, N+1 |
+| `accounts` | 27 | Login por e-mail, papel no JWT, permissões, rate limit |
 | `events` | 42 | Vitrine, painel, catálogo externo, mapa de assentos |
 
 Destaque para **três testes de concorrência**: dois sobem 10 threads disputando

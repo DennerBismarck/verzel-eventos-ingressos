@@ -58,6 +58,13 @@
 | 51 | Dinheiro trafega como **string** também fora dos serializers | `Decimal` solto num dicionário de resposta é serializado como número JSON e vira float no JavaScript — o problema que `DecimalField` evita no resto da API | Devolver o `Decimal` cru |
 | 52 | E2E contra a aplicação **real**, sem mock de API | O que estes testes provam é a costura entre as pontas; um mock de `/api/reservations` passaria mesmo com o backend recusando | Mockar a rede no Playwright (rápido e inútil aqui) |
 | 53 | E2E com **um worker só** | Os testes compram do mesmo seed e disputam o mesmo estoque; em paralelo um veria o efeito do outro e a falha seria irreprodutível | `fullyParallel` (rápido, instável) |
+| 54 | Rate limit com **escopos separados** por risco | auth 10/min (força bruta), gate 120/min (a portaria valida em rajada e apertar atrapalharia o uso legítimo), catalog 30/min (cada chamada gasta cota nossa no terceiro) | Um limite único para tudo (ou sufoca a portaria, ou é inútil no login) |
+| 55 | Limite de auth **configurável**, com padrão estrito | Limite de taxa é configuração de ambiente. Sem a variável, o throttle derruba a suíte E2E e a reação natural seria afrouxar a produção — o pior desfecho | Valor fixo no código |
+| 56 | Rotação de refresh + blacklist | Um refresh vazado só serve até a vítima usar o dela; e o logout passa a revogar de verdade, em vez de apagar do navegador e torcer | Refresh estático de 7 dias |
+| 57 | Reserva expira em **10 minutos** | Sem prazo, quem fecha a aba trava o lugar para sempre. É o que toda bilheteria faz | Segurar até alguém cancelar na mão (ninguém cancela) |
+| 58 | Expiração roda **na hora de reservar**, não só em cron | É o momento em que o estoque importa. Funciona sem agendador — e a Render free não tem cron. O comando existe para quem tiver, mas não é pré-requisito de correção | Depender só de cron (o sistema fica errado onde não há um) |
+| 59 | `expires_at` derivado de `created_at` | O prazo é regra do sistema, não dado do registro. Coluna duplicaria estado e o banco poderia discordar da constante | Coluna `expires_at` |
+| 60 | Otimizar só o que foi **medido** | 17 queries em `/reservations` viraram 5; a vitrine já estava em 2 e não foi tocada | Otimizar por intuição (mexe no que já estava bom) |
 | _ | _(adicione as suas ao longo da semana)_ | | |
 
 ## Uso de IA (rascunho — vira seção do README)
@@ -285,6 +292,50 @@ não do produto:
 **Aprendizado:** teste novo mente mais que código novo. Antes de acreditar numa
 falha, vale perguntar se o teste mede o que diz medir — foi a mesma pergunta que
 salvou o caso do `force_authenticate` no dia 4.
+
+## O que eu decidi NÃO construir
+
+Tão importante quanto a lista acima. Cada item abaixo foi considerado, tem
+justificativa técnica para ficar de fora, e a decisão é reversível.
+
+### Fila de aplicação para disputa de assento
+
+**A ideia:** enfileirar os pedidos por seção (Redis/Celery) para que duas
+pessoas não conflitem ao escolher a mesma poltrona.
+
+**Por que não:** *a fila já existe*. `SELECT ... FOR UPDATE` faz o Postgres
+enfileirar o segundo cliente até o primeiro commitar — é uma fila, mantida pelo
+banco, com garantia transacional. Uma fila de aplicação na frente disso não
+muda o desfecho: adiciona um serviço, um worker, latência e três modos de falha
+novos para produzir exatamente o mesmo resultado.
+
+**O que uma fila resolveria de verdade:** *admissão sob carga extrema* — 50 mil
+pessoas no minuto da abertura, onde o objetivo é proteger o banco de virar
+gargalo e dar ao usuário uma posição na fila em vez de um timeout. Isso é
+controle de tráfego, não de correção, e é um problema que este sistema não tem.
+
+**O que eu construí no lugar:** o **prazo de reserva**. A intuição por trás do
+pedido — "duas pessoas competindo pelo mesmo lugar" — apontava para um problema
+real, mas não era o conflito simultâneo (esse o lock já resolve). Era o lugar
+preso por uma reserva que ninguém pagou nem cancelou.
+
+**Quando eu mudaria de ideia:** se a medição mostrasse fila de locks no
+Postgres em pico, ou p99 de reserva subindo com concorrência.
+
+### Arquitetura distribuída (serviços separados, mensageria, cache externo)
+
+O sistema tem três entidades e um fluxo. Separar em serviços agora trocaria uma
+transação que já é atômica por consistência eventual entre processos — e o
+requisito central do desafio é justamente *não vender o mesmo lugar duas vezes*.
+Seria trocar a garantia mais forte que eu tenho pela mais fraca, em nome de uma
+escala que não existe.
+
+### Cache de leitura na vitrine
+
+A vitrine faz **2 queries** medidas. Cache aqui adicionaria invalidação — e um
+evento esgotado aparecendo como disponível é pior que 2 queries.
+
+---
 
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele
