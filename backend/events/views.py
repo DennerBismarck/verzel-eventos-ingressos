@@ -49,8 +49,15 @@ class PublicEventListView(generics.ListAPIView):
     def get_queryset(self):
         # select_related evita uma query extra por evento para pegar o nome do
         # organizador (problema N+1: 12 eventos = 13 queries sem isto).
+        #
+        # O filtro por data não é cosmético: o backend JÁ recusa reservar um
+        # evento que começou ("Este evento já começou"), então anunciá-lo em
+        # "Em cartaz" só entrega ao cliente um caminho que termina em erro.
+        # Enquanto o seed só tinha evento futuro, isto nunca apareceu.
         qs = (
-            Event.objects.filter(status=Event.Status.PUBLISHED)
+            Event.objects.filter(
+                status=Event.Status.PUBLISHED, starts_at__gte=timezone.now()
+            )
             .select_related("organizer")
             .com_preco_inicial()
         )
@@ -68,6 +75,11 @@ class PublicEventDetailView(generics.RetrieveAPIView):
     # O filtro de status está no queryset, não numa checagem depois do get():
     # assim um evento em rascunho devolve 404, e não 403. Um 403 confirmaria
     # que o evento existe — informação que o público não precisa ter.
+    #
+    # Aqui NÃO há filtro por data, ao contrário da lista. Quem comprou ingresso
+    # para ontem ainda tem o link da sessão em "Meus ingressos"; devolver 404
+    # apagaria a página do próprio evento a que a pessoa foi. Sumir da vitrine
+    # e continuar existindo por link direto são coisas diferentes.
     queryset = (
         Event.objects.filter(status=Event.Status.PUBLISHED)
         .select_related("organizer")

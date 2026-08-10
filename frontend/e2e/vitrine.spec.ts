@@ -40,6 +40,13 @@ test.describe("vitrine", () => {
     await expect(page.getByRole("button", { name: /Reservar/ })).toHaveCount(0);
   });
 
+  test("sessão que já aconteceu não fica anunciada em cartaz", async ({ page }) => {
+    // O backend recusa reservar evento começado. Deixá-lo na vitrine só
+    // entregava ao cliente um caminho que termina em erro.
+    await page.goto("/?q=Superman");
+    await expect(page.getByText("Nenhum evento encontrado")).toBeVisible();
+  });
+
   test("rascunho não aparece para o público", async ({ page }) => {
     await page.goto("/?q=Zona Zero");
     await expect(page.getByText("Nenhum evento encontrado")).toBeVisible();

@@ -69,6 +69,14 @@ EVENTOS = [
     # Rascunho: prova que a vitrine pública filtra por status.
     ("1375646", "Zona Zero", "/hWT5fHzVcxq06SuLfAWYVCrue7P.jpg",
      "Cinesala, São Paulo", 30, 20, "35.00", 50, Event.Status.DRAFT),
+    # Duas sessões que JÁ ACONTECERAM (dias negativos). Sem elas, a aba "Já
+    # aconteceram" do painel do organizador nasce vazia e o filtro por data da
+    # vitrine nunca é exercitado — foi assim que o bug de anunciar evento
+    # vencido passou despercebido até agora.
+    ("1061474", "Superman", "/v8ezJI3qfEv4OYq8AWSp4inFIwE.jpg",
+     "Cinemark Eldorado, São Paulo", -6, 21, "42.00", 160, Event.Status.PUBLISHED),
+    ("1087192", "Como Treinar o Seu Dragão", "/vdvEClt3J8sFWxyMo0Jm7JpouEo.jpg",
+     "Cinesystem Iguatemi, Campinas", -13, 16, "30.00", 120, Event.Status.PUBLISHED),
 ]
 
 # Sinopses REAIS do TMDb, colhidas com a própria integração do projeto e
@@ -157,6 +165,19 @@ SINOPSES = {
         "para sobreviver à escassez de recursos e à força sombria que a mantém "
         "presa."
     ),
+    "1061474": (
+        "Superman, um jovem repórter de Metrópolis, embarca em uma jornada "
+        "para reconciliar sua herança kryptoniana com sua criação humana como "
+        "Clark Kent."
+    ),
+    "1087192": (
+        "Na montanhosa Ilha de Berk, vikings e dragões são inimigos "
+        "implacáveis há gerações, mas Soluço é diferente. Filho do Chefe "
+        "Stoico, o Imenso, o criativo e subestimado Soluço desafia séculos de "
+        "tradição ao fazer amizade com Banguela, um temido dragão Fúria da "
+        "Noite. Essa relação improvável revela a verdadeira natureza dos "
+        "dragões, abalando as bases da sociedade viking."
+    ),
 }
 
 # Quantos ingressos já "vendidos" em cada evento, para a vitrine e o painel do
@@ -172,6 +193,9 @@ VENDIDOS = {
     "1284465": 12,
     "1339713": 26,
     "1315772": 40,    # esgotado (capacidade 40)
+    # Sessões encerradas: número alto, como fica um evento no fim da carreira.
+    "1061474": 148,
+    "1087192": 96,
 }
 
 # Um evento de LUGAR MARCADO. Sem ele, o mapa de assentos só apareceria para

@@ -84,6 +84,13 @@ export default function EventoPage() {
     );
   }
 
+  // A sessão já passou. A página continua existindo — quem foi ao evento tem o
+  // link em "Meus ingressos" e o cartaz é a lembrança da sessão —, mas tudo o
+  // que leva a comprar sai do caminho. O backend recusaria a reserva de
+  // qualquer jeito ("Este evento já começou"); deixar o botão na tela só
+  // convidaria o cliente a percorrer o fluxo inteiro até levar um erro.
+  const encerrado = new Date(evento.starts_at).getTime() <= Date.now();
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
       <nav aria-label="Trilha" className="mb-4 text-xs text-muted">
@@ -141,7 +148,7 @@ export default function EventoPage() {
             </div>
           )}
 
-          {evento.kind === "SEATED" && (
+          {evento.kind === "SEATED" && !encerrado && (
             <div className="mt-8 rounded-card border border-line bg-white p-4 sm:p-6">
               <h2 className="mb-4 text-base font-semibold text-ink">Escolha seus lugares</h2>
               {assentos.length === 0 ? (
@@ -162,13 +169,28 @@ export default function EventoPage() {
 
         <div className="lg:row-span-2">
           <div className="lg:sticky lg:top-20">
-            <PainelCompra
-              evento={evento}
-              assentos={assentos}
-              escolhidos={escolhidos}
-              aoLimparEscolha={() => setEscolhidos(new Set())}
-              aoComprar={carregar}
-            />
+            {encerrado ? (
+              <div className="rounded-card border border-line bg-white p-5">
+                <Alert tone="info" title="Este evento já aconteceu">
+                  A sessão foi em <span className="lowercase">{fullDate(evento.starts_at)}</span>.
+                  Não é mais possível comprar ingressos.
+                </Alert>
+                <Link
+                  href="/"
+                  className="mt-4 inline-block text-sm font-semibold text-brand hover:underline"
+                >
+                  Ver o que está em cartaz →
+                </Link>
+              </div>
+            ) : (
+              <PainelCompra
+                evento={evento}
+                assentos={assentos}
+                escolhidos={escolhidos}
+                aoLimparEscolha={() => setEscolhidos(new Set())}
+                aoComprar={carregar}
+              />
+            )}
           </div>
         </div>
       </div>

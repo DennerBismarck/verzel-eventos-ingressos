@@ -109,6 +109,27 @@ class VitrinePublicaTest(APITestCase):
         titulos = [e["title"] for e in self.client.get(reverse("event-list")).json()["results"]]
         self.assertEqual(titulos, ["Antes", "Duna", "Depois"])
 
+    def test_vitrine_nao_anuncia_evento_que_ja_comecou(self):
+        """
+        O backend já recusa reservar evento começado ("Este evento já
+        começou"). Mantê-lo em "Em cartaz" só entregava ao cliente um caminho
+        que termina em erro — e a busca trazia o mesmo evento de volta.
+        """
+        criar_evento(self.org, external_id="9", title="Ontem", starts_at=daqui(-1))
+
+        lista = self.client.get(reverse("event-list")).json()["results"]
+        self.assertNotIn("Ontem", [e["title"] for e in lista])
+        self.assertEqual(self.client.get(reverse("event-list"), {"q": "ontem"}).json()["count"], 0)
+
+    def test_pagina_do_evento_passado_continua_existindo(self):
+        """
+        Sumir da vitrine e deixar de existir são coisas diferentes: quem foi ao
+        evento ainda tem o link da sessão em "Meus ingressos".
+        """
+        passado = criar_evento(self.org, external_id="9", title="Ontem", starts_at=daqui(-1))
+        r = self.client.get(reverse("event-detail", args=[passado.pk]))
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
     def test_a_consulta_da_vitrine_tem_order_by(self):
         """
         O teste acima passaria por acidente se o banco devolvesse na ordem de
