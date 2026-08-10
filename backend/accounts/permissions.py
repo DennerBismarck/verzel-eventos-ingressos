@@ -26,6 +26,12 @@ class HasRole(BasePermission):
         return bool(
             user
             and user.is_authenticated
+            # is_active explícito, mesmo o simplejwt já recusando token de
+            # usuário inativo na autenticação. Defesa em profundidade: esta
+            # classe não deve assumir QUEM autenticou. Trocar o backend, somar
+            # uma sessão de admin ou autenticar por outro meio não pode
+            # reabrir a porta para uma conta desativada.
+            and user.is_active
             and user.role == self.required_role
         )
 
