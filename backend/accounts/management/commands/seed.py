@@ -17,7 +17,8 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from events.models import Event
+from events.models import Event, Seat
+from events.services import generate_seats
 from ticketing.models import Reservation, Ticket
 
 User = get_user_model()
@@ -73,6 +74,32 @@ EVENTOS = [
 # Quantos ingressos já "vendidos" em cada evento, para a vitrine e o painel do
 # organizador não aparecerem zerados. Chave = external_id.
 VENDIDOS = {"969681": 47, "1084244": 112, "1081003": 8, "1315772": 40}
+
+# Um evento de LUGAR MARCADO. Sem ele, o mapa de assentos só apareceria para
+# quem criasse um evento na mão — e quem for avaliar provavelmente não vai.
+EVENTO_COM_LUGAR = {
+    "external_id": "1284041",
+    "title": "A Última Casa — sessão com lugar marcado",
+    "cartaz": "/AqOwuZ4X0Ssi3LIsYqXNw52IIvW.jpg",
+    "venue": "Teatro Municipal, São Paulo",
+    "dias": 9,
+    "hora": 20,
+}
+
+SECOES = [
+    {"name": "Plateia", "rows": ["A", "B", "C", "D", "E"], "seats_per_row": 12, "price": "90.00"},
+    {"name": "Balcão", "rows": ["F", "G"], "seats_per_row": 10, "price": "60.00"},
+]
+
+# Poltronas já ocupadas, para o mapa não abrir todo verde. Posições espalhadas
+# de propósito: uma sala com exatamente as 10 primeiras vendidas não parece uma
+# sala de verdade.
+OCUPADAS = [
+    ("Plateia", "A", 5), ("Plateia", "A", 6), ("Plateia", "B", 7),
+    ("Plateia", "C", 1), ("Plateia", "C", 2), ("Plateia", "C", 3),
+    ("Plateia", "D", 9), ("Plateia", "E", 4), ("Plateia", "E", 12),
+    ("Balcão", "F", 2), ("Balcão", "F", 3), ("Balcão", "G", 8),
+]
 
 
 class Command(BaseCommand):
@@ -173,12 +200,15 @@ class Command(BaseCommand):
                 f"{evento.sold_count}/{evento.capacity} vendidos)"
             )
 
+        self._evento_com_lugar_marcado(organizador, agora)
+
         # Remove eventos de seed que saíram da lista (ex.: o elenco antigo, sem
         # cartaz). Só os que ninguém reservou — se houver reserva, o evento
         # deixou de ser dado de demonstração e vira histórico de verdade.
+        conhecidos = [e[0] for e in EVENTOS] + [EVENTO_COM_LUGAR["external_id"]]
         obsoletos = Event.objects.filter(
             organizer=organizador, source=Event.Source.TMDB
-        ).exclude(external_id__in=[e[0] for e in EVENTOS])
+        ).exclude(external_id__in=conhecidos)
 
         for evento in obsoletos:
             if evento.reservations.exists():
@@ -191,3 +221,63 @@ class Command(BaseCommand):
 
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(f"Seed pronto. Senha de todos: {SENHA_PADRAO}"))
+
+    def _evento_com_lugar_marcado(self, organizador, agora):
+        spec = EVENTO_COM_LUGAR
+        quando = (agora + timedelta(days=spec["dias"])).replace(
+            hour=spec["hora"], minute=0, second=0, microsecond=0
+        )
+
+        evento, criado = Event.objects.get_or_create(
+            source=Event.Source.TMDB,
+            external_id=spec["external_id"],
+            organizer=organizador,
+            defaults={
+                "title": spec["title"],
+                "description": (
+                    "Sessão com lugar marcado. Escolha a poltrona no mapa; "
+                    "cada ingresso vale por um assento específico."
+                ),
+                "image_url": f"{CARTAZ}{spec['cartaz']}",
+                "venue": spec["venue"],
+                "starts_at": quando,
+                "kind": Event.Kind.SEATED,
+                "status": Event.Status.PUBLISHED,
+                "price": Decimal("0.00"),
+                "capacity": 0,
+            },
+        )
+
+        if not criado:
+            # Mesma regra dos de pista: apresentação é reescrita, estoque não.
+            evento.title = spec["title"]
+            evento.image_url = f"{CARTAZ}{spec['cartaz']}"
+            evento.venue = spec["venue"]
+            evento.starts_at = quando
+            evento.status = Event.Status.PUBLISHED
+            evento.save(update_fields=["title", "image_url", "venue", "starts_at", "status"])
+
+        # O mapa é montado UMA vez. Refazer a cada deploy apagaria a poltrona
+        # que um ingresso emitido aponta — e generate_seats recusaria de
+        # qualquer forma assim que houvesse venda de verdade.
+        if evento.seats.exists():
+            self.stdout.write(
+                f"  = {spec['title']} (mapa já existe, {evento.seats.count()} lugares)"
+            )
+            return
+
+        total = generate_seats(event=evento, sections=SECOES)
+
+        # Ocupa algumas poltronas para o mapa não abrir todo verde.
+        ocupadas = 0
+        for secao, fila, numero in OCUPADAS:
+            ocupadas += Seat.objects.filter(
+                event=evento, section=secao, row=fila, number=numero
+            ).update(status=Seat.Status.SOLD)
+
+        # sold_count precisa acompanhar as poltronas marcadas na mão: é ele que
+        # a vitrine lê para dizer quantos lugares restam.
+        evento.sold_count = ocupadas
+        evento.save(update_fields=["sold_count"])
+
+        self.stdout.write(f"  + {spec['title']} ({total} lugares, {ocupadas} ocupados)")
