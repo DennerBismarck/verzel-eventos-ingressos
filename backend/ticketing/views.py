@@ -5,6 +5,7 @@ Todas as regras moram em services.py. Aqui só se traduz HTTP: ler o request,
 chamar o serviço, transformar ReservationError em 409.
 """
 
+from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
@@ -325,9 +326,19 @@ class GateEventsView(generics.ListAPIView):
     permission_classes = (IsGate,)
     pagination_class = None
 
+    # Sessão encerrada some da lista depois de 12h. A janela é folgada de
+    # propósito: a portaria fica de pé a noite inteira, e uma sessão que
+    # começou às 22h ainda precisa estar ali às 2h da manhã. O que não faz
+    # sentido é oferecer a sessão da semana passada num seletor onde escolher
+    # errado significa recusar a entrada de quem tem ingresso válido.
+    JANELA_APOS_INICIO = timedelta(hours=12)
+
     def list(self, request, *args, **kwargs):
         eventos = (
-            Event.objects.filter(status=Event.Status.PUBLISHED)
+            Event.objects.filter(
+                status=Event.Status.PUBLISHED,
+                starts_at__gte=timezone.now() - self.JANELA_APOS_INICIO,
+            )
             # Anotado no banco: contar em Python custaria duas queries por
             # evento, e esta lista é recarregada a cada validação.
             .annotate(

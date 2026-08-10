@@ -1158,3 +1158,55 @@ class ResumoDoOrganizadorTest(TestCase):
     def test_receita_zerada_vem_como_string(self):
         """Dinheiro é string em toda a API; zero não pode virar 0 (número)."""
         self.assertEqual(self._get()["revenue"], "0.00")
+
+
+class PortariaListaDeSessoesTest(TestCase):
+    """Quais sessões aparecem no seletor da portaria."""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.client = APIClient()
+        self.org, self.hoje = _make_world(capacity=10)
+        self.portaria = User.objects.create_user(
+            email="pt@t.dev", password="x", full_name="Pedro", role=User.Role.GATE
+        )
+        self.client.force_authenticate(self.portaria)
+
+    def _evento(self, titulo, horas):
+        return Event.objects.create(
+            organizer=self.org,
+            source=Event.Source.TMDB,
+            external_id=titulo,
+            title=titulo,
+            venue="Arena",
+            starts_at=timezone.now() + timedelta(hours=horas),
+            kind=Event.Kind.GA,
+            status=Event.Status.PUBLISHED,
+            price=Decimal("10.00"),
+            capacity=10,
+        )
+
+    def titulos(self):
+        return [e["title"] for e in self.client.get(reverse("gate-events")).json()]
+
+    def test_sessao_da_noite_continua_disponivel_de_madrugada(self):
+        """
+        Começou às 22h, são 2h da manhã: a portaria ainda está de pé e pode
+        precisar validar um retardatário. Janela de 12h depois do início.
+        """
+        self._evento("Começou há 4h", horas=-4)
+        self.assertIn("Começou há 4h", self.titulos())
+
+    def test_sessao_da_semana_passada_sai_da_lista(self):
+        """
+        Escolher a sessão errada no seletor significa recusar a entrada de
+        quem tem ingresso válido. Sessão vencida ali é armadilha, não opção.
+        """
+        self._evento("Semana passada", horas=-24 * 7)
+        self.assertNotIn("Semana passada", self.titulos())
+
+    def test_rascunho_nunca_aparece(self):
+        rascunho = self._evento("Rascunho", horas=2)
+        Event.objects.filter(pk=rascunho.pk).update(status=Event.Status.DRAFT)
+        self.assertNotIn("Rascunho", self.titulos())
