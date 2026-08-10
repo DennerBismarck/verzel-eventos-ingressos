@@ -97,7 +97,12 @@ export type SharedTicket = {
   seat_label: string | null;
 };
 
-export type ReservationStatus = "PENDING" | "PAID" | "REFUSED" | "CANCELLED";
+export type ReservationStatus =
+  | "PENDING"
+  | "PAID"
+  | "REFUSED"
+  | "CANCELLED"
+  | "EXPIRED";
 
 export type Payment = {
   id: number;
@@ -115,6 +120,8 @@ export type Reservation = {
   quantity: number;
   total_price: string;
   created_at: string;
+  /** Quando a reserva perde a validade se ninguém pagar. */
+  expires_at: string;
   tickets: Ticket[];
   payments: Payment[];
 };

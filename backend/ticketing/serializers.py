@@ -68,12 +68,17 @@ class ReservationSerializer(serializers.ModelSerializer):
     event_starts_at = serializers.DateTimeField(source="event.starts_at", read_only=True)
     tickets = TicketSerializer(many=True, read_only=True)
     payments = PaymentSerializer(many=True, read_only=True)
+    # Derivado de created_at, não coluna. A tela usa para o contador; sem ele,
+    # o prazo seria uma regra invisível e o cliente perderia o lugar sem
+    # entender por quê.
+    expires_at = serializers.DateTimeField(read_only=True)
 
     class Meta:
         model = Reservation
         fields = (
             "id", "event", "event_title", "event_starts_at", "status",
-            "quantity", "total_price", "created_at", "tickets", "payments",
+            "quantity", "total_price", "created_at", "expires_at",
+            "tickets", "payments",
         )
 
 

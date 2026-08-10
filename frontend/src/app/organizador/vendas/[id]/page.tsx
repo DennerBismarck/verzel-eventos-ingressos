@@ -201,6 +201,9 @@ function SituacaoDaVenda({ status }: { status: ReservationStatus }) {
     PENDING: { tone: "warn", texto: "Aguardando" },
     REFUSED: { tone: "danger", texto: "Recusada" },
     CANCELLED: { tone: "neutral", texto: "Cancelada" },
+    // "Expirada" e "Cancelada" são histórias diferentes: uma o cliente
+    // decidiu, a outra o relógio decidiu por ele.
+    EXPIRED: { tone: "neutral", texto: "Expirada" },
   } as const;
   const { tone, texto } = mapa[status];
   return <Badge tone={tone}>{texto}</Badge>;

@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * Primitivos de interface.
  *
@@ -6,6 +8,7 @@
  * ligado ao input por aria-describedby). Uma dependência a mais não pagaria.
  */
 
+import { useEffect, useState } from "react";
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
@@ -177,4 +180,55 @@ export function EmptyState({
 /** Placeholder de carregamento com a mesma forma do conteúdo real. */
 export function Skeleton({ className = "" }: { className?: string }) {
   return <div aria-hidden="true" className={`animate-pulse rounded bg-line ${className}`} />;
+}
+
+/**
+ * Contador regressivo até um instante.
+ *
+ * Existe porque o prazo da reserva é invisível sem ele: o cliente perderia o
+ * lugar sem entender o motivo. Mostrar o relógio correndo é o que transforma
+ * uma regra do servidor em informação acionável.
+ */
+export function ContagemRegressiva({
+  ate,
+  aoZerar,
+}: {
+  ate: string;
+  aoZerar?: () => void;
+}) {
+  const alvo = new Date(ate).getTime();
+  const [restante, setRestante] = useState(() => alvo - Date.now());
+
+  useEffect(() => {
+    // Recalcula a partir do relógio a cada tique, em vez de subtrair 1s do
+    // valor anterior: se a aba ficar em segundo plano, o navegador estrangula
+    // o timer e o contador atrasaria em relação ao servidor.
+    const id = setInterval(() => setRestante(alvo - Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [alvo]);
+
+  const zerado = restante <= 0;
+
+  useEffect(() => {
+    if (zerado) aoZerar?.();
+  }, [zerado, aoZerar]);
+
+  if (zerado) {
+    return <span className="font-semibold text-danger">prazo esgotado</span>;
+  }
+
+  const minutos = Math.floor(restante / 60_000);
+  const segundos = Math.floor((restante % 60_000) / 1000);
+  const urgente = restante < 60_000;
+
+  return (
+    <span
+      // aria-live polite e não assertive: um contador que interrompe o leitor
+      // de tela a cada segundo é tortura.
+      aria-live="polite"
+      className={`font-mono font-semibold tabular-nums ${urgente ? "text-danger" : "text-ink"}`}
+    >
+      {minutos}:{String(segundos).padStart(2, "0")}
+    </span>
+  );
 }

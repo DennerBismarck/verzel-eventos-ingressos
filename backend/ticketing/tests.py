@@ -621,3 +621,149 @@ class PaymentAndStockTest(TestCase):
         self.evento.save(update_fields=["status"])
         with self.assertRaises(services.ReservationError):
             services.create_reservation(customer=self.cliente, event_id=self.evento.pk, quantity=1)
+
+
+class PrazoDeReservaTest(TestCase):
+    """
+    O prazo existe porque, sem ele, quem fecha a aba no checkout trava o lugar
+    para sempre — a reserva fica PENDING e nada nunca a cancela.
+    """
+
+    def setUp(self):
+        _, self.evento = _make_world(capacity=10, price="20.00")
+        self.cliente = User.objects.create_user(
+            email="prazo@t.dev", password="x", full_name="P", role=User.Role.CUSTOMER
+        )
+        self.outro = User.objects.create_user(
+            email="prazo2@t.dev", password="x", full_name="P2", role=User.Role.CUSTOMER
+        )
+
+    def _envelhecer(self, reserva, minutos):
+        """created_at é auto_now_add; para envelhecer é preciso um UPDATE."""
+        Reservation.objects.filter(pk=reserva.pk).update(
+            created_at=timezone.now() - timedelta(minutes=minutos)
+        )
+
+    def test_reserva_dentro_do_prazo_nao_expira(self):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=2
+        )
+        self._envelhecer(r, 5)
+        self.assertEqual(services.expire_reservations(), 0)
+        r.refresh_from_db()
+        self.assertEqual(r.status, Reservation.Status.PENDING)
+
+    def test_reserva_vencida_devolve_o_estoque(self):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=4
+        )
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.sold_count, 4)
+
+        self._envelhecer(r, 11)
+        self.assertEqual(services.expire_reservations(), 1)
+
+        r.refresh_from_db()
+        self.evento.refresh_from_db()
+        self.assertEqual(r.status, Reservation.Status.EXPIRED)
+        self.assertEqual(self.evento.sold_count, 0)
+
+    def test_expirar_e_idempotente(self):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=1
+        )
+        self._envelhecer(r, 11)
+        self.assertEqual(services.expire_reservations(), 1)
+        # Segunda passada não acha mais nada e não mexe no estoque de novo.
+        self.assertEqual(services.expire_reservations(), 0)
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.sold_count, 0)
+
+    def test_reserva_paga_nunca_expira(self):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=1
+        )
+        services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+        self._envelhecer(r, 999)
+
+        self.assertEqual(services.expire_reservations(), 0)
+        r.refresh_from_db()
+        self.assertEqual(r.status, Reservation.Status.PAID)
+
+    def test_nao_paga_reserva_vencida(self):
+        """
+        Sem esta checagem, uma aba aberta há duas horas ainda pagaria — e o
+        lugar já podia ter sido devolvido e revendido a outra pessoa.
+        """
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=1
+        )
+        self._envelhecer(r, 11)
+
+        with self.assertRaises(services.ReservationError) as ctx:
+            services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+        self.assertIn("prazo", str(ctx.exception).lower())
+
+        r.refresh_from_db()
+        self.evento.refresh_from_db()
+        self.assertEqual(r.status, Reservation.Status.EXPIRED)
+        self.assertEqual(self.evento.sold_count, 0, "o estoque tem que voltar")
+
+    def test_estoque_abandonado_volta_para_o_proximo_cliente(self):
+        """
+        O caso que motivou tudo: um evento pequeno esgotado por desistências
+        silenciosas volta a vender sem ninguém intervir.
+        """
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=10
+        )
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.available, 0)
+
+        with self.assertRaises(services.ReservationError):
+            services.create_reservation(
+                customer=self.outro, event_id=self.evento.pk, quantity=1
+            )
+
+        self._envelhecer(r, 11)
+
+        # Ninguém rodou comando nenhum: a própria tentativa de reservar limpa.
+        nova = services.create_reservation(
+            customer=self.outro, event_id=self.evento.pk, quantity=1
+        )
+        self.assertEqual(nova.status, Reservation.Status.PENDING)
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.sold_count, 1)
+
+    def test_assentos_tambem_voltam_ao_expirar(self):
+        _, teatro = _make_seated(seats=4, slug="prazo")
+        assentos = list(teatro.seats.order_by("number")[:2])
+        r = services.create_reservation(
+            customer=self.cliente, event_id=teatro.pk, seat_ids=[a.pk for a in assentos]
+        )
+        self._envelhecer(r, 11)
+        services.expire_reservations()
+
+        teatro.refresh_from_db()
+        self.assertEqual(teatro.sold_count, 0)
+        self.assertEqual(teatro.seats.filter(status=Seat.Status.AVAILABLE).count(), 4)
+
+    def test_comando_de_manutencao_expira_e_o_dry_run_nao(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=3
+        )
+        self._envelhecer(r, 11)
+
+        saida = StringIO()
+        call_command("expirar_reservas", "--dry-run", stdout=saida)
+        r.refresh_from_db()
+        self.assertEqual(r.status, Reservation.Status.PENDING, "dry-run não pode alterar")
+        self.assertIn("seriam expiradas", saida.getvalue())
+
+        call_command("expirar_reservas", stdout=StringIO())
+        r.refresh_from_db()
+        self.assertEqual(r.status, Reservation.Status.EXPIRED)

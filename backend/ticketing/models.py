@@ -20,6 +20,10 @@ class Reservation(models.Model):
         PAID = "PAID", "Paga"
         REFUSED = "REFUSED", "Pagamento recusado"
         CANCELLED = "CANCELLED", "Cancelada"
+        # Estado próprio, e não CANCELLED: "você cancelou" e "o prazo acabou"
+        # são histórias diferentes para quem lê o histórico, e a segunda pode
+        # virar métrica de checkout abandonado.
+        EXPIRED = "EXPIRED", "Prazo de pagamento esgotado"
 
     customer = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -41,6 +45,12 @@ class Reservation(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+        indexes = [
+            # A varredura de expiração pergunta sempre a mesma coisa:
+            # "PENDING criadas antes de X?". Sem este índice ela varre a tabela
+            # inteira — e roda a cada reserva nova, ou seja, no caminho quente.
+            models.Index(fields=["status", "created_at"], name="reservation_expiry_idx"),
+        ]
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(quantity__gte=1), name="reservation_quantity_gte_1"
@@ -54,6 +64,19 @@ class Reservation(models.Model):
     def holds_stock(self):
         """Estados em que a reserva ainda ocupa lugar no estoque."""
         return self.status in (self.Status.PENDING, self.Status.PAID)
+
+    @property
+    def expires_at(self):
+        """
+        Quando a reserva perde a validade, se ninguém pagar.
+
+        Derivado de created_at em vez de virar coluna: o prazo é uma regra do
+        sistema, não um dado do registro. Guardar duplicaria estado e abriria
+        a chance de o banco discordar da constante.
+        """
+        from .services import PRAZO_PAGAMENTO
+
+        return self.created_at + PRAZO_PAGAMENTO
 
 
 class Payment(models.Model):

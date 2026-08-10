@@ -9,6 +9,7 @@ O ponto central de tudo aqui é o par transaction.atomic() + select_for_update()
 """
 
 import logging
+from datetime import timedelta
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -30,6 +31,16 @@ logger = logging.getLogger(__name__)
 # inalcançável pela interface — e o enunciado pede as duas respostas do
 # pagamento no front, não só no servidor.
 LIMITE_RECUSA = 6
+
+# Quanto tempo a reserva segura o estoque antes de pagar.
+#
+# Sem prazo, quem fecha a aba no checkout trava aquele lugar PARA SEMPRE: a
+# reserva fica PENDING e nada nunca a cancela. Num evento disputado, meia dúzia
+# de desistências silenciosas esgotam o evento sem uma venda.
+#
+# 10 minutos é o que a bilheteria costuma dar: sobra para escolher assento e
+# digitar cartão, e não prende o estoque a ponto de o próximo cliente desistir.
+PRAZO_PAGAMENTO = timedelta(minutes=10)
 
 
 class ReservationError(Exception):
@@ -67,6 +78,19 @@ def create_reservation(*, customer, event_id, quantity=1, seat_ids=None):
         # não protege nada.
         # ---------------------------------------------------------------
         event = Event.objects.select_for_update().get(pk=event_id)
+
+        # Antes de dizer "esgotado", devolve o que expirou.
+        #
+        # Roda AQUI, e não só num cron, de propósito: o momento em que o
+        # estoque importa é exatamente este. Assim a expiração funciona mesmo
+        # onde não há agendador — e a Render no plano free não tem. O comando
+        # `expirar_reservas` existe para quem tiver, mas não é pré-requisito
+        # para o sistema estar correto.
+        #
+        # Seguro dentro do lock: a linha do evento já está travada acima, então
+        # ninguém mais mexe no sold_count enquanto devolvemos.
+        expire_reservations(event=event)
+        event.refresh_from_db(fields=["sold_count"])
 
         if event.status != Event.Status.PUBLISHED:
             raise ReservationError("Este evento não está à venda.")
@@ -154,12 +178,28 @@ def _reserve_seats(customer, event, seat_ids):
 # Pagamento (simulado) — emite os ingressos
 # --------------------------------------------------------------------------
 def pay_reservation(*, reservation_id, customer):
+    # A expiração acontece ANTES de abrir a transação do pagamento, e não
+    # dentro dela.
+    #
+    # Motivo, aprendido do jeito difícil: a primeira versão marcava EXPIRED,
+    # devolvia o estoque e então levantava ReservationError — tudo dentro do
+    # mesmo atomic(). O raise faz rollback de TUDO, inclusive da escrituração
+    # que eu tinha acabado de fazer. A reserva voltava a PENDING e o estoque
+    # continuava preso. A transação que protege a lógica desfazia a limpeza.
+    expire_reservations()
+
     with transaction.atomic():
         # Trava a reserva: sem isto, dois cliques no botão "pagar" emitiriam
         # dois conjuntos de ingressos para a mesma reserva.
         reservation = Reservation.objects.select_for_update().get(
             pk=reservation_id, customer=customer
         )
+
+        if reservation.status == Reservation.Status.EXPIRED:
+            raise ReservationError(
+                "O prazo para pagar esta reserva terminou e os lugares voltaram "
+                "para o estoque. Faça uma nova reserva."
+            )
 
         if reservation.status != Reservation.Status.PENDING:
             raise ReservationError(
@@ -238,6 +278,40 @@ def cancel_reservation(*, reservation_id, customer):
         _release_stock(reservation)
 
     return reservation
+
+
+def expire_reservations(*, event=None, agora=None) -> int:
+    """
+    Devolve ao estoque as reservas que passaram do prazo sem pagamento.
+
+    Devolve quantas expiraram. Idempotente: rodar de novo não faz nada, porque
+    a segunda passada não acha mais nenhuma PENDING vencida.
+
+    Pode ser chamada de dentro de uma transação já aberta (é o caso de
+    create_reservation) ou sozinha (é o caso do comando de manutenção).
+    """
+    limite = (agora or timezone.now()) - PRAZO_PAGAMENTO
+
+    with transaction.atomic():
+        # select_for_update aqui também: sem ele, o cron e uma requisição de
+        # pagamento poderiam pegar a MESMA reserva ao mesmo tempo — uma
+        # expirando e devolvendo o estoque, a outra confirmando e emitindo
+        # ingresso. O cliente pagaria por um lugar que acabou de ser devolvido.
+        vencidas = Reservation.objects.select_for_update().filter(
+            status=Reservation.Status.PENDING, created_at__lt=limite
+        )
+        if event is not None:
+            vencidas = vencidas.filter(event=event)
+
+        vencidas = list(vencidas)
+        for reserva in vencidas:
+            reserva.status = Reservation.Status.EXPIRED
+            reserva.save(update_fields=["status"])
+            _release_stock(reserva)
+
+    if vencidas:
+        logger.info("Expiradas %s reservas sem pagamento", len(vencidas))
+    return len(vencidas)
 
 
 def _release_stock(reservation):

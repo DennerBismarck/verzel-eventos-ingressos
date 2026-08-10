@@ -13,7 +13,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
 import { SeatMap } from "@/components/seat-map";
-import { Alert, Badge, Button, Skeleton } from "@/components/ui";
+import { Alert, Badge, Button, ContagemRegressiva, Skeleton } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { fullDate, money } from "@/lib/format";
@@ -451,6 +451,21 @@ function PainelCompra({
             Seus {reserva.quantity} ingresso{reserva.quantity > 1 ? "s estão" : " está"}{" "}
             reservado{reserva.quantity > 1 ? "s" : ""}. Confirme para emitir.
           </p>
+
+          {/* O prazo existe no servidor de qualquer forma; mostrar o relógio é
+              o que impede o cliente de perder o lugar sem entender por quê. */}
+          <div className="mt-3 flex items-center justify-between rounded border border-line bg-canvas px-3 py-2 text-sm">
+            <span className="text-muted">Seus lugares estão guardados por</span>
+            <ContagemRegressiva
+              ate={reserva.expires_at}
+              aoZerar={() => {
+                setEtapa("escolha");
+                setReserva(null);
+                aoLimparEscolha();
+                void aoComprar();
+              }}
+            />
+          </div>
 
           <dl className="my-4 space-y-2 border-y border-line py-4 text-sm">
             <div className="flex justify-between">
