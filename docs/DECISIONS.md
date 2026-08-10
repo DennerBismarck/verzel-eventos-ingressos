@@ -37,6 +37,13 @@
 | 30 | Regras em `services.py`, fora das views | A mesma regra vale para API, admin e teste — e o teste de concorrência roda sem subir servidor | Lógica dentro da view (intestável em concorrência) |
 | 31 | Portaria responde **HTTP 200** mesmo para ingresso inválido | A portaria perguntou e foi respondida. "Inválido" é o conteúdo, não falha da requisição; um 4xx faria o front mostrar "erro de rede" | 4xx por resultado negativo |
 | 32 | Estoque acabado → **409**, não 400 | O pedido está bem formado; mudou o estado do mundo. Com outra quantidade o mesmo pedido funciona | 400 (diz "você errou" quando o cliente não errou) |
+| 33 | Visual copiado de Sympla/Eventim/Ingresso.com, não "genérico" | Grid denso de pôsteres, bloco de data, laranja no CTA. Fugir de gradiente roxo, hero centralizado e `rounded-3xl` — o enunciado pede explicitamente para fugir de AI slop | Tema escuro com gradiente (bonito em print, não parece bilheteria) |
+| 34 | Pôster em proporção **2:3** fixa | É o formato que o TMDb devolve. Deixar o navegador decidir causaria _layout shift_ quando a imagem chegasse | `height: auto` |
+| 35 | `<img>` em vez de `next/image` | As imagens vêm de hosts externos e já chegam no tamanho certo; o otimizador da Vercel cobraria transformação sem ganho | `next/image` (custo sem benefício aqui) |
+| 36 | Vitrine renderizada no **cliente**, não no servidor | SSR daria SEO melhor, mas exigiria o backend acordado a cada request — e a Render free hiberna, o que faria a home levar 50s | SSR/ISR na home |
+| 37 | Token em `localStorage` | O front (Vercel) e a API (Render) estão em domínios diferentes; cookie HttpOnly cross-site exigiria `SameSite=None` e domínio compartilhado. **Custo assumido:** XSS levaria o token — mitigado por access token de 60 min | Cookie HttpOnly (não viável neste deploy) |
+| 38 | Cartazes do seed **fixos** no código, não buscados na hora | O seed roda no build da Render; não pode depender de a API externa estar de pé nem gastar cota a cada deploy | Buscar no TMDb durante o seed |
+| 39 | Recusa de pagamento devolve **402**, tratada como resultado e não erro | O cliente precisa saber que não tem ingresso. Um 200 com lista vazia seria fácil de ignorar por engano no front | 200 sempre |
 | _ | _(adicione as suas ao longo da semana)_ | | |
 
 ## Uso de IA (rascunho — vira seção do README)
@@ -118,6 +125,47 @@ trocar por um caractere garantidamente diferente.
 
 **Aprendizado:** teste verde não é prova de nada se o cenário que ele monta não
 é o cenário que ele diz montar.
+
+### Dia 3 — hidratação abortada nas rotas dinâmicas (React #418)
+
+**Sintoma:** só `/eventos/[id]` e `/ingresso/[token]` — justamente as rotas
+renderizadas sob demanda — quebravam com "Minified React error #418".
+
+**Como isolei:** rodei as 8 rotas num navegador de verdade registrando
+`pageerror`. As 8 estáticas passavam, as 2 dinâmicas falhavam → o problema
+estava no **layout compartilhado**, não nas páginas. Confirmei com `curl`: em
+rota estática o HTML do servidor traz o *fallback* do `<Suspense>`; em rota
+dinâmica traz o `<header>` inteiro.
+
+**Causa:** o cabeçalho chamava `useSearchParams()` dentro de um `<Suspense>`.
+Nas rotas dinâmicas o servidor renderiza o componente completo, mas o cliente
+começa pelo fallback — servidor e cliente divergem e o React aborta a
+hidratação (a página vira HTML morto, sem JavaScript).
+
+**Correção:** ler o `?q=` de `window.location.search` dentro de um `useEffect`.
+Efeito não roda no servidor, então o primeiro render é idêntico dos dois lados.
+
+**Aprendizado:** hidratação quebrada não aparece como tela de erro — aparece
+como "o botão não funciona". Sem abrir o console num navegador real, isso
+chegaria intacto na entrega.
+
+### Dia 3 — a portaria derrubava a própria página
+
+**Sintoma:** a API respondia `200 {"result":"INVALID"}` e a tela mostrava
+"This page couldn't load".
+
+**Causa:** quando a câmera não abre (permissão negada, dispositivo sem câmera),
+o `stop()` da `html5-qrcode` **lança de forma síncrona** — não é Promise
+rejeitada. O `.catch()` que eu tinha posto nunca era chamado, o erro subia e
+matava a árvore React inteira.
+
+**Correção:** flag `rodando` para só parar o que começou, e `try/catch`
+envolvendo a chamada — não `.catch()`.
+
+**Aprendizado:** `.catch()` só pega rejeição de Promise. Função que devolve
+Promise mas valida argumento antes ainda pode lançar sincronamente — e o
+usuário afetado é exatamente aquele com a câmera bloqueada, que é quem mais
+precisava da digitação manual funcionar.
 
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele

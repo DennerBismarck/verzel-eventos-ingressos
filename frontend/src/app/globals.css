@@ -1,26 +1,86 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/*
+  Design tokens.
+
+  Referência visual: Sympla (grid denso, metadados discretos), Eventim (bloco de
+  data à esquerda, listagem compacta) e Ingresso.com (pôster em primeiro plano,
+  laranja no CTA).
+
+  Decisões deliberadas, em oposição ao visual "gerado":
+  - tema claro único, sem gradiente de fundo
+  - raio pequeno (4-8px), não 16-24px
+  - hierarquia por borda de 1px, não por sombra pesada
+  - laranja/marinho, nunca índigo-violeta
+  - pilha de fontes do sistema: parece produto, não portfólio
+*/
+
+@theme {
+  --color-ink: #14161a;
+  --color-body: #3f444d;
+  --color-muted: #6c727f;
+  --color-line: #e2e5ea;
+  --color-line-strong: #c9cdd5;
+  --color-surface: #ffffff;
+  --color-canvas: #f4f5f7;
+
+  --color-brand: #0b3c74;
+  --color-brand-dark: #082c56;
+
+  --color-accent: #dd5410;
+  --color-accent-dark: #bc4409;
+
+  --color-ok: #157347;
+  --color-ok-soft: #e8f3ec;
+  --color-warn: #a5610a;
+  --color-warn-soft: #fdf3e2;
+  --color-danger: #b42318;
+  --color-danger-soft: #fdeceb;
+
+  --radius-card: 8px;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--color-canvas);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-canvas);
+  color: var(--color-body);
+  font-family: var(--font-sans);
+}
+
+h1, h2, h3, h4 {
+  color: var(--color-ink);
+  letter-spacing: -0.011em;
+}
+
+/* Foco visível e consistente — teclado precisa enxergar onde está. */
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Some com as setinhas do input number: o passo de quantidade é feito
+   com botões próprios, maiores e acessíveis no toque. */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

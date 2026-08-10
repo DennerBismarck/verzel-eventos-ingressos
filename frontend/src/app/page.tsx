@@ -1,94 +1,232 @@
 "use client";
 
 /**
- * Página "hello world" do Dia 0.
+ * Vitrine.
  *
- * Propósito único: provar que o pipeline inteiro está de pé —
- * Vercel serve o front, o front alcança a API Django, a API responde.
- * Se isto funciona em produção, o deploy está destravado e o resto do
- * projeto é só código.
- *
- * É Client Component de propósito: a chamada acontece no browser, depois
- * do carregamento. Se fosse feita no servidor durante o build, a API fora
- * do ar quebraria o deploy — e a gente quer justamente ver o estado real.
- *
- * Esta página é descartável: no Dia 1 vira a listagem de eventos.
+ * Componente de cliente porque a busca e os filtros são interativos e a API
+ * está em outro domínio. Renderizar no servidor daria SEO melhor, mas exigiria
+ * o backend acordado a cada request — e a Render no plano free hiberna, o que
+ * transformaria a home num cold start de 50s.
  */
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
 
-import { API_URL, api, type HealthResponse } from "@/lib/api";
+import { EventCard, EventCardSkeleton } from "@/components/event-card";
+import { Alert, Button, EmptyState } from "@/components/ui";
+import { api } from "@/lib/api";
+import { dateParts, money } from "@/lib/format";
+import type { EventKind, Page, PublicEvent } from "@/lib/types";
 
-type Status =
-  | { kind: "checking" }
-  | { kind: "ok"; service: string }
-  | { kind: "error"; message: string };
+const FILTROS: { valor: EventKind | ""; rotulo: string }[] = [
+  { valor: "", rotulo: "Tudo" },
+  { valor: "GA", rotulo: "Pista" },
+  { valor: "SEATED", rotulo: "Lugar marcado" },
+];
 
 export default function Home() {
-  const [status, setStatus] = useState<Status>({ kind: "checking" });
+  // useSearchParams obriga a fronteira de Suspense: a query string só existe em
+  // tempo de request, então o Next precisa saber o que desenhar enquanto isso.
+  return (
+    <Suspense fallback={<VitrineCarregando />}>
+      <Vitrine />
+    </Suspense>
+  );
+}
+
+function VitrineCarregando() {
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6">
+      <Grade>
+        {Array.from({ length: 10 }).map((_, i) => (
+          <EventCardSkeleton key={i} />
+        ))}
+      </Grade>
+    </div>
+  );
+}
+
+function Vitrine() {
+  const params = useSearchParams();
+  const q = params.get("q") ?? "";
+
+  const [kind, setKind] = useState<EventKind | "">("");
+  const [dados, setDados] = useState<Page<PublicEvent> | null>(null);
+  const [carregando, setCarregando] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = useCallback(async () => {
+    setCarregando(true);
+    setErro(null);
+    try {
+      const busca = new URLSearchParams();
+      if (q) busca.set("q", q);
+      if (kind) busca.set("kind", kind);
+      setDados(await api<Page<PublicEvent>>(`/api/events?${busca}`));
+    } catch {
+      setErro(
+        "Não conseguimos carregar os eventos. A API pode estar hibernando — " +
+          "no plano gratuito, a primeira chamada leva até 50 segundos.",
+      );
+    } finally {
+      setCarregando(false);
+    }
+  }, [q, kind]);
 
   useEffect(() => {
-    api<HealthResponse>("/api/health")
-      .then((data) => setStatus({ kind: "ok", service: data.service }))
-      .catch((err: Error) =>
-        setStatus({ kind: "error", message: err.message }),
-      );
-  }, []);
+    void carregar();
+  }, [carregar]);
+
+  const eventos = dados?.results ?? [];
+  const destaque = !q && !kind ? eventos[0] : undefined;
+  const grade = destaque ? eventos.slice(1) : eventos;
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-8 px-6 py-16">
-      <header className="space-y-3">
-        <p className="text-sm font-medium tracking-widest text-neutral-500 uppercase">
-          Desafio Elite Dev · Verzel
-        </p>
-        <h1 className="text-4xl font-bold tracking-tight text-balance">
-          Plataforma de Eventos e Ingressos
-        </h1>
-        <p className="text-neutral-600 dark:text-neutral-400">
-          Organizador publica eventos de um catálogo externo, cliente compra
-          ingresso com QR, portaria valida na entrada.
-        </p>
-      </header>
+    <div className="mx-auto max-w-6xl px-4 py-6">
+      {destaque && !carregando && <Destaque event={destaque} />}
 
-      <section className="rounded-xl border border-neutral-200 p-5 dark:border-neutral-800">
-        <h2 className="mb-3 text-sm font-semibold">Conexão com a API</h2>
-
-        <div className="flex items-center gap-3">
-          <span
-            aria-hidden
-            className={`size-2.5 rounded-full ${
-              status.kind === "ok"
-                ? "bg-emerald-500"
-                : status.kind === "error"
-                  ? "bg-red-500"
-                  : "animate-pulse bg-amber-400"
-            }`}
-          />
-          {/* role="status" faz o leitor de tela anunciar a mudança sem roubar o foco. */}
-          <p role="status" className="text-sm">
-            {status.kind === "checking" && "Verificando…"}
-            {status.kind === "ok" && (
-              <>
-                Conectado a <strong>{status.service}</strong>
-              </>
-            )}
-            {status.kind === "error" && (
-              <>
-                Sem resposta da API{" "}
-                <span className="text-neutral-500">({status.message})</span>
-              </>
-            )}
-          </p>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold text-ink">
+            {q ? `Resultados para "${q}"` : "Em cartaz"}
+          </h1>
+          {dados && (
+            <p className="mt-0.5 text-sm text-muted">
+              {dados.count} {dados.count === 1 ? "evento" : "eventos"}
+              {q ? " encontrados" : " disponíveis"}
+            </p>
+          )}
         </div>
 
-        <p className="mt-3 font-mono text-xs break-all text-neutral-500">
-          {API_URL}/api/health
-        </p>
-      </section>
+        {/* Chips de filtro — padrão Sympla. */}
+        <div className="flex gap-1.5" role="group" aria-label="Filtrar por tipo">
+          {FILTROS.map((f) => (
+            <button
+              key={f.valor}
+              onClick={() => setKind(f.valor)}
+              aria-pressed={kind === f.valor}
+              className={`h-8 rounded-full border px-3 text-[13px] font-medium transition-colors
+                ${
+                  kind === f.valor
+                    ? "border-brand bg-brand text-white"
+                    : "border-line-strong bg-white text-body hover:border-brand/40"
+                }`}
+            >
+              {f.rotulo}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <footer className="text-sm text-neutral-500">
-        Dia 0 — scaffold, autenticação com 3 papéis e deploy destravado.
-      </footer>
-    </main>
+      {erro && (
+        <div className="space-y-3">
+          <Alert tone="danger" title="Falha ao carregar">
+            {erro}
+          </Alert>
+          <Button variant="secondary" onClick={() => void carregar()}>
+            Tentar de novo
+          </Button>
+        </div>
+      )}
+
+      {carregando && (
+        <Grade>
+          {Array.from({ length: 10 }).map((_, i) => (
+            <EventCardSkeleton key={i} />
+          ))}
+        </Grade>
+      )}
+
+      {!carregando && !erro && grade.length === 0 && !destaque && (
+        <EmptyState
+          title={q ? "Nenhum evento encontrado" : "Ainda não há eventos publicados"}
+          action={
+            q ? (
+              <Button variant="secondary" onClick={() => (window.location.href = "/")}>
+                Limpar busca
+              </Button>
+            ) : undefined
+          }
+        >
+          {q
+            ? "Tente outro termo, ou procure pelo nome do local."
+            : "Assim que um organizador publicar um evento, ele aparece aqui."}
+        </EmptyState>
+      )}
+
+      {!carregando && grade.length > 0 && (
+        <Grade>
+          {grade.map((e) => (
+            <EventCard key={e.id} event={e} />
+          ))}
+        </Grade>
+      )}
+    </div>
+  );
+}
+
+function Grade({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      {children}
+    </div>
+  );
+}
+
+/** Faixa horizontal do primeiro evento — quebra a monotonia da grade. */
+function Destaque({ event }: { event: PublicEvent }) {
+  const { dia, mes, hora } = dateParts(event.starts_at);
+
+  return (
+    <section className="mb-8 overflow-hidden rounded-card border border-line bg-white">
+      <div className="grid gap-0 sm:grid-cols-[200px_1fr] md:grid-cols-[240px_1fr]">
+        <div className="relative aspect-[2/3] bg-canvas sm:aspect-auto">
+          {event.image_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={event.image_url} alt="" className="size-full object-cover" />
+          ) : (
+            <div className="grid size-full place-items-center bg-brand/5" />
+          )}
+        </div>
+
+        <div className="flex flex-col justify-center gap-3 p-5 md:p-7">
+          <div className="flex items-center gap-3">
+            <div className="rounded border border-line bg-canvas px-2.5 py-1.5 text-center leading-none">
+              <span className="block text-lg font-bold text-ink">{dia}</span>
+              <span className="block text-[10px] font-semibold tracking-wider text-muted">
+                {mes}
+              </span>
+            </div>
+            <div className="text-sm text-muted">
+              <p className="font-medium text-body">{event.venue}</p>
+              <p>às {hora}</p>
+            </div>
+          </div>
+
+          <h2 className="text-2xl font-bold leading-tight text-ink md:text-3xl">
+            {event.title}
+          </h2>
+
+          {event.description && (
+            <p className="line-clamp-2 max-w-2xl text-sm text-muted">{event.description}</p>
+          )}
+
+          <div className="mt-1 flex flex-wrap items-center gap-4">
+            <Link
+              href={`/eventos/${event.id}`}
+              className="inline-flex h-11 items-center rounded bg-accent px-6 text-[15px]
+                font-semibold text-white hover:bg-accent-dark"
+            >
+              Ver ingressos
+            </Link>
+            <p className="text-sm text-muted">
+              a partir de{" "}
+              <strong className="text-base font-bold text-ink">{money(event.price)}</strong>
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }

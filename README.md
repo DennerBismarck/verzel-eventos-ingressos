@@ -3,9 +3,8 @@
 Desafio Elite Dev (Verzel) — organizador publica eventos a partir de um catálogo externo,
 cliente compra ingressos com QR, portaria valida na entrada.
 
-> **Status:** Dia 1 — scaffold, autenticação JWT com 3 papéis, deploy configurado,
-> models de evento, catálogo externo (TMDb + Ticketmaster) e painel do organizador.
-> Fluxo de compra em construção.
+> **Status:** fluxo de pista completo — vitrine, compra, ingresso com QR assinado,
+> compartilhamento por link e validação na portaria. Mapa de assentos pendente.
 > Planejamento em [`docs/PLANNING.md`](docs/PLANNING.md), decisões em [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Stack
@@ -47,8 +46,21 @@ cp .env.local.example .env.local
 npm run dev                   # http://localhost:3000
 ```
 
-A home mostra um indicador de conexão com a API — bolinha verde significa que
-front e back estão conversando.
+### Telas
+
+| Rota | Quem usa | O que faz |
+|------|----------|-----------|
+| `/` | qualquer um | Vitrine com busca e filtro por tipo |
+| `/eventos/{id}` | qualquer um | Detalhe + compra (reserva → pagamento) |
+| `/minha-conta` | cliente | Ingressos com QR, link de compartilhamento, histórico |
+| `/ingresso/{token}` | público | Ingresso compartilhado, **somente leitura** |
+| `/organizador` | organizador | Eventos próprios e publicação |
+| `/organizador/novo` | organizador | Busca no catálogo externo e criação |
+| `/portaria` | portaria | Leitura por câmera + digitação manual |
+
+O design segue Sympla, Eventim e Ingresso.com: grade densa de pôsteres em 2:3,
+bloco de data sobre a imagem, laranja no CTA. A tela da portaria é pensada para
+celular em pé, com resultado em tela cheia, som e vibração.
 
 ---
 
@@ -66,9 +78,10 @@ Senha de **todos**: `verzel123`
 `python manage.py seed` é idempotente (rodar de novo não duplica).
 Use `--reset` para recriar do zero.
 
-Também cria **4 eventos de pista** do organizador acima — 3 publicados (120, 80 e
-60 lugares) e 1 em rascunho, para demonstrar o filtro da vitrine. As datas são
-relativas ao dia em que o seed roda, então o seed nunca "vence".
+Também cria **11 eventos de pista** do organizador acima: 10 publicados (um deles
+já esgotado, para exibir esse estado) e 1 em rascunho, que prova que a vitrine
+pública filtra por status. As datas são relativas ao dia em que o seed roda —
+então o seed nunca "vence" — e o horário é fixo e plausível.
 
 ### Chaves das APIs externas
 
@@ -181,7 +194,7 @@ porquê. Não é um log gerado no fim: foi preenchido enquanto decidia.
 
 **Onde a IA escreveu:** scaffold do Django e do Next, configuração (settings,
 CORS, JWT, WhiteNoise), `render.yaml`, comando de seed, models, clientes das APIs
-externas, serializers e views.
+externas, serializers, views, lógica de reserva/QR/portaria e todas as telas.
 
 **O que eu fiz sem IA:** as decisões de arquitetura e modelagem listadas no
 `DECISIONS.md` — contador vs. contagem para o estoque, constraint no banco além
@@ -189,11 +202,14 @@ do lock, unicidade do par `(source, external_id)`, separação dos serializers p
 audiência, e a escolha de suportar as duas APIs externas em vez de uma.
 
 **Verificação:** não aceitei código sem exercitá-lo. Cada camada foi testada
-contra o Postgres real antes de virar commit — incluindo a `CheckConstraint`
-(provei que o banco recusa `sold_count > capacity`), as permissões por papel
-(403/401/404 nos casos certos) e a tentativa de forjar `organizer` no corpo do
-request. Dois bugs achados assim estão documentados na seção "Bugs" do
-`DECISIONS.md`.
+contra o Postgres real e num navegador real antes de virar commit — incluindo a
+`CheckConstraint` (provei que o banco recusa `sold_count > capacity`), as
+permissões por papel (403/401/404 nos casos certos), a tentativa de forjar
+`organizer` no corpo do request, e o fluxo inteiro de compra e validação via
+Playwright. **Cinco bugs** encontrados assim estão documentados na seção "Bugs"
+do `DECISIONS.md`, com sintoma, método de diagnóstico, causa e correção — entre
+eles uma hidratação abortada que deixava duas telas sem JavaScript e um erro
+síncrono que derrubava a página da portaria justamente quando a câmera falhava.
 
 Artefatos de contexto usados com a IA estão versionados em [`docs/`](docs/).
 
