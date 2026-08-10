@@ -57,6 +57,7 @@ npm run dev                   # http://localhost:3000
 | `/ingresso/{token}` | público | Ingresso compartilhado, **somente leitura** |
 | `/organizador` | organizador | Eventos próprios e publicação |
 | `/organizador/novo` | organizador | Busca no catálogo externo e criação |
+| `/organizador/vendas/{id}` | organizador | Receita, ocupação e quem comprou |
 | `/portaria` | portaria | Leitura por câmera + digitação manual |
 
 O design segue Sympla, Eventim e Ingresso.com: grade densa de pôsteres em 2:3,
@@ -126,6 +127,7 @@ Documentação interativa: **`/api/docs`** (Swagger UI, gerado do código via dr
 | GET | `/api/tickets` | cliente | Carteira de ingressos, com o payload do QR |
 | GET | `/api/shared/{share_token}` | público | Ingresso compartilhado, **somente leitura** |
 | GET | `/api/gate/events` | portaria | Eventos selecionáveis na tela da portaria |
+| GET | `/api/organizer/events/{id}/sales` | organizador | Receita, ingressos validados e lista de compradores |
 | POST | `/api/gate/validate` | portaria | Valida: `VALID`, `INVALID`, `ALREADY_USED`, `WRONG_EVENT` |
 
 **Pagamento simulado:** não há transação financeira. A regra é determinística —
@@ -135,15 +137,15 @@ aleatória não permitiria.
 
 ### Testes
 
+#### Backend — 105 testes
+
 ```bash
 cd backend && python manage.py test
 ```
 
-**96 testes**, distribuídos assim:
-
 | App | Testes | O que cobre |
 |-----|--------|-------------|
-| `ticketing` | 27 | No-double-sell (pista e assento), QR, portaria, estoque |
+| `ticketing` | 36 | No-double-sell (pista e assento), QR, portaria, vendas |
 | `accounts` | 27 | Login por e-mail, papel no JWT, permissões por papel |
 | `events` | 42 | Vitrine, painel, catálogo externo, mapa de assentos |
 
@@ -165,6 +167,23 @@ Os testes de catálogo **não tocam a rede**: `requests.get` é substituído por
 dublê. Teste que depende de API de terceiro falha quando o terceiro cai, gasta
 cota a cada execução e não roda sem chave — deixa de ser teste e vira
 monitoramento.
+
+#### Ponta a ponta — 32 testes
+
+```bash
+cd backend && python manage.py seed && python manage.py runserver   # em um terminal
+cd frontend && npm run test:e2e                                     # em outro
+```
+
+Playwright contra a aplicação real: Next servindo o front, Django falando com o
+Postgres. **Nada é dublado** — o que estes testes provam é justamente a costura
+entre as pontas, e um mock de `/api/reservations` passaria mesmo com o backend
+recusando a reserva.
+
+Cobrem vitrine, compra, mapa de assentos, portaria, painel do organizador e
+sessão (incluindo a renovação automática do token). A tela da portaria roda
+**também num viewport de celular**, que é onde ela é usada de verdade.
+`npm run test:e2e:ui` abre o modo interativo.
 
 Exemplo:
 ```bash

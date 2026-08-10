@@ -50,6 +50,14 @@
 | 43 | Evento com lugar marcado nasce em **rascunho** | Publicar antes de existir mapa colocaria na vitrine um teatro sem poltrona nenhuma. Vira publicado só depois do mapa criado | Publicar direto e torcer para o organizador montar o mapa em seguida |
 | 44 | Mapa público mostra situação, **nunca o comprador** | Saber que a C4 está ocupada é necessário para escolher; saber de quem, não | Devolver a reserva junto (vazaria quem comprou o quê) |
 | 45 | Rota do mapa **sem paginação** | Paginar o mapa desenharia meia sala na tela | Paginação padrão do DRF |
+| 46 | Sessão vive **fora do React** (`session.ts` + `useSyncExternalStore`) | Quem precisa trocar o token é a `api()`, no meio de uma requisição. Com a verdade num estado de componente, qualquer chamador que já tivesse copiado o token seguiria com o valor velho depois da renovação | Estado no contexto e passar `token` por parâmetro (impede renovar de forma transparente) |
+| 47 | Renovação **compartilhada** por promessa em voo | Telas disparam chamadas em paralelo; sem isso seriam N refresh simultâneos e os últimos usariam um token já consumido | Renovar por requisição |
+| 48 | Renova **uma vez** e só; se falhar, limpa a sessão | Insistir viraria laço infinito com o servidor recusando | Tentar N vezes com espera progressiva (complexidade sem ganho aqui) |
+| 49 | Sessão malformada é **descartada** na leitura | Um objeto sem `full_name` derrubava a árvore React inteira. "Deslogado" é um estado do qual o usuário sai sozinho; tela branca não | Confiar no que está no storage |
+| 50 | Receita conta **só reserva paga** | Pendente ainda pode ser recusada; recusada e cancelada nunca entraram. Somar tudo inflaria o faturamento do organizador | Somar todas as reservas |
+| 51 | Dinheiro trafega como **string** também fora dos serializers | `Decimal` solto num dicionário de resposta é serializado como número JSON e vira float no JavaScript — o problema que `DecimalField` evita no resto da API | Devolver o `Decimal` cru |
+| 52 | E2E contra a aplicação **real**, sem mock de API | O que estes testes provam é a costura entre as pontas; um mock de `/api/reservations` passaria mesmo com o backend recusando | Mockar a rede no Playwright (rápido e inútil aqui) |
+| 53 | E2E com **um worker só** | Os testes compram do mesmo seed e disputam o mesmo estoque; em paralelo um veria o efeito do outro e a falha seria irreprodutível | `fullyParallel` (rápido, instável) |
 | _ | _(adicione as suas ao longo da semana)_ | | |
 
 ## Uso de IA (rascunho — vira seção do README)
@@ -243,6 +251,40 @@ responder "não". Reescrito em duas passadas: a primeira valida a forma e
 
 Foi o teste do mapa gigante que expôs isso — e o mesmo teste também mostrou que
 meu limite estava em `> 5000` quando 50 filas × 100 lugares dão exatamente 5000.
+
+### Dia 6 — a chave de API no log (segunda parte da mesma lição)
+
+Já registrado acima. Vale ligar com o achado do dia 6: **o Decimal cru na
+resposta de vendas** virava número JSON, ou seja, float no cliente. São o mesmo
+erro em roupas diferentes — proteger o caminho principal e esquecer a borda. O
+`DecimalField` cuidava de todos os serializers; o dicionário montado à mão
+escapou.
+
+### Dia 6 — a suíte de E2E encontrou mais bug em si mesma do que no produto
+
+Das 28 primeiras execuções, **todas** falharam: o CORS não liberava a porta que
+eu escolhi para os testes. Depois disso, 8 falhas — e 7 eram defeito do teste,
+não do produto:
+
+- `.count()` **não reexecuta**. Três testes liam a contagem antes de a API
+  responder e viam `0`. `toHaveCount` e `expect.poll` esperam; `count()` não.
+- `getByRole("alert")` casava também com o `__next-route-announcer__` que o
+  Next injeta.
+- `getByText("Titular")` casava com o `<dt>` e com o parágrafo que menciona
+  "titular".
+- `getByRole("heading", { name: "Esgotado" })` nunca casaria: o título do aviso
+  é um `<p>`. O teste acusaria o app de estar errado.
+- `localStorage` em `about:blank` levanta `SecurityError`.
+- E um teste chamado *"pagamento de 10 ou mais é recusado"* que não testava
+  recusa nenhuma — a interface limita a compra a 8, então aquele caminho é
+  inalcançável pela tela.
+
+**A oitava era real** e valeu a suíte inteira: uma sessão malformada no
+`localStorage` derrubava a árvore React e deixava tela branca.
+
+**Aprendizado:** teste novo mente mais que código novo. Antes de acreditar numa
+falha, vale perguntar se o teste mede o que diz medir — foi a mesma pergunta que
+salvou o caso do `force_authenticate` no dia 4.
 
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele
