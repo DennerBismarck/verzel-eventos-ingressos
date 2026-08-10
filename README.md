@@ -98,6 +98,28 @@ Documentação interativa: **`/api/docs`** (Swagger UI, gerado do código via dr
 | GET | `/api/catalog/search` | organizador | Busca no catálogo externo. `?source=TMDB\|TICKETMASTER&q=` |
 | GET/POST | `/api/organizer/events` | organizador | Lista/cria os eventos **do organizador logado** |
 | GET/PATCH/DELETE | `/api/organizer/events/{id}` | organizador | Só os próprios (id alheio devolve 404) |
+| GET/POST | `/api/reservations` | cliente | Lista/cria reserva (já segura o estoque) |
+| POST | `/api/reservations/{id}/pay` | cliente | Pagamento simulado; emite os ingressos |
+| POST | `/api/reservations/{id}/cancel` | cliente | Cancela e devolve ao estoque |
+| GET | `/api/tickets` | cliente | Carteira de ingressos, com o payload do QR |
+| GET | `/api/shared/{share_token}` | público | Ingresso compartilhado, **somente leitura** |
+| GET | `/api/gate/events` | portaria | Eventos selecionáveis na tela da portaria |
+| POST | `/api/gate/validate` | portaria | Valida: `VALID`, `INVALID`, `ALREADY_USED`, `WRONG_EVENT` |
+
+**Pagamento simulado:** não há transação financeira. A regra é determinística —
+pedidos de **10 ingressos ou mais são recusados** e o estoque volta. Determinística
+de propósito: dá para demonstrar o caminho de falha ao vivo, o que uma recusa
+aleatória não permitiria.
+
+### Testes
+
+```bash
+cd backend && python manage.py test
+```
+
+19 testes, com destaque para **dois testes de concorrência** que sobem 10 threads
+disputando 3 vagas — um com `select_for_update` e outro sem, para demonstrar a
+race condition que o lock elimina. O segundo imprime o resultado na saída.
 
 Exemplo:
 ```bash

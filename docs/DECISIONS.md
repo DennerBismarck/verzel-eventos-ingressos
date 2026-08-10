@@ -28,6 +28,15 @@
 | 21 | Autorização do organizador via `get_queryset`, não `if` na view | `Event.objects.filter(organizer=request.user)` faz o objeto alheio simplesmente não existir → 404. Um 403 confirmaria que o evento existe | Checar `obj.organizer == user` depois de buscar (vaza existência via 403) |
 | 22 | Erro do catálogo externo vira **502**, chave ausente vira **503** | Falha de terceiro não pode virar 500 nosso. Os códigos separam "eles caíram" de "falta configurar aqui" | Deixar a exceção subir como 500 (mistura culpa nossa com culpa deles) |
 | 23 | `timeout=6s` em toda chamada externa + cache de 15 min | Sem timeout, uma API lenta prende o worker do gunicorn até morrer — um terceiro derruba a nossa API. O cache poupa cota de requisições | Chamada sem timeout (padrão do `requests` é esperar para sempre) |
+| 24 | Reserva **segura o estoque antes** do pagamento | Reservar depois de pagar abriria janela em que dois clientes pagam pelo mesmo lugar e um precisa ser estornado. Segurando antes, o perdedor descobre na hora — quando ainda consegue escolher outra coisa | Só descontar no pagamento confirmado (mais simples, gera estorno) |
+| 25 | Pagamento simulado com regra **determinística** (≥10 ingressos → recusa) | Dá para demonstrar o caminho de falha ao vivo na defesa | Recusa aleatória (demo irreprodutível — péssimo numa entrevista) |
+| 26 | `Payment` como model próprio, não campo em `Reservation` | Registra a TENTATIVA: uma reserva recusada deixa rastro com data e motivo | Campo `paid=True/False` (perde o histórico da tentativa) |
+| 27 | Assinatura do QR **não** é coluna | Derivável de `code + TICKET_SIGNING_KEY` a qualquer momento. Guardar duplicaria estado — e um dump vazado entregaria QRs prontos | Coluna `signature` (redundante e mais perigosa em vazamento) |
+| 28 | `share_token` separado do `code` | Compartilhar a visualização não é ceder a entrada. O link mostra o ingresso mas não revela o que valida na portaria | Um identificador só (mandar no WhatsApp entregaria a entrada) |
+| 29 | `total_price` congelado na reserva | Reajuste do organizador não pode alterar retroativamente quem já reservou | Calcular do preço do evento na hora de exibir |
+| 30 | Regras em `services.py`, fora das views | A mesma regra vale para API, admin e teste — e o teste de concorrência roda sem subir servidor | Lógica dentro da view (intestável em concorrência) |
+| 31 | Portaria responde **HTTP 200** mesmo para ingresso inválido | A portaria perguntou e foi respondida. "Inválido" é o conteúdo, não falha da requisição; um 4xx faria o front mostrar "erro de rede" | 4xx por resultado negativo |
+| 32 | Estoque acabado → **409**, não 400 | O pedido está bem formado; mudou o estado do mundo. Com outra quantidade o mesmo pedido funciona | 400 (diz "você errou" quando o cliente não errou) |
 | _ | _(adicione as suas ao longo da semana)_ | | |
 
 ## Uso de IA (rascunho — vira seção do README)
@@ -81,6 +90,34 @@ redirecionar preservando o corpo do request — então levanta `RuntimeError`.
 com barra e metade sem transforma um 403 legítimo num 500, e um 500 mascara
 completamente o erro real de permissão. Ler *de onde* vem o traceback (meu
 código ou middleware) foi o que encurtou o diagnóstico.
+
+### Dia 2 — `FOR UPDATE cannot be applied to the nullable side of an outer join`
+
+**Sintoma:** 5 testes da portaria quebrando com esse erro do Postgres.
+
+**Causa:** em `validate_ticket` eu fazia
+`Ticket.objects.select_for_update().select_related("event", "customer", "seat")`.
+Como `seat` é nullable, o `select_related` gera um LEFT OUTER JOIN — e o
+Postgres recusa aplicar `FOR UPDATE` ao lado nulável de um outer join, porque
+não existe linha para travar quando o assento é nulo.
+
+**Correção:** `select_for_update(of=("self",))`, que trava só a linha do
+ingresso.
+
+**O detalhe que importa:** o erro não era só sintático. Travar `event` e
+`customer` para validar uma entrada **bloquearia a venda do evento inteiro toda
+vez que alguém passasse na portaria**. O Postgres me obrigou a escolher o
+escopo do lock — e o escopo certo era o mais estreito.
+
+### Dia 2 — teste que passava sem testar nada
+
+`test_assinatura_adulterada_e_rejeitada` fazia `payload[:-1] + "0"` para
+corromper a assinatura. Quando a assinatura já terminava em `"0"`, o "ataque"
+era idêntico ao original e o teste passava sem exercitar nada. Corrigido para
+trocar por um caractere garantidamente diferente.
+
+**Aprendizado:** teste verde não é prova de nada se o cenário que ele monta não
+é o cenário que ele diz montar.
 
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele
