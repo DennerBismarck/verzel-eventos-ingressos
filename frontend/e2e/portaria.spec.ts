@@ -28,8 +28,8 @@ test.describe("portaria", () => {
     await entrar(page, "portaria");
     await page.goto("/portaria");
 
-    // Sem evento escolhido não há como responder "evento errado".
-    await expect(page.getByText("Escolha o evento para começar")).toBeVisible();
+    // Sem sessão escolhida não há como responder "evento errado".
+    await expect(page.getByText("Escolha a sessão para começar")).toBeVisible();
     await page.selectOption("#evento", idEvento);
 
     const validar = async (valor: string) => {
@@ -40,13 +40,17 @@ test.describe("portaria", () => {
       const painel = page.locator("div[role=alert].fixed");
       await expect(painel).toBeVisible();
       const titulo = await painel.getByRole("heading").innerText();
-      await page.getByRole("button", { name: "Próximo ingresso" }).click();
+      // A faixa some sozinha em 2s — quem está na porta não tem mão livre para
+      // fechar aviso a cada pessoa. O clique só antecipa isso.
+      await painel.click();
+      await expect(painel).toBeHidden();
       return titulo;
     };
 
-    expect(await validar(codigo)).toBe("Entrada liberada");
+    // Ordens curtas, não frases: é o que se lê de relance com fila esperando.
+    expect(await validar(codigo)).toBe("Pode entrar");
     expect(await validar(codigo)).toBe("Já utilizado");
-    expect(await validar("nao-e-um-codigo")).toBe("Ingresso inválido");
+    expect(await validar("nao-e-um-codigo")).toBe("Não vale");
   });
 
   test("acusa ingresso de outro evento", async ({ page }) => {
@@ -60,13 +64,19 @@ test.describe("portaria", () => {
     await page.goto("/portaria");
 
     // Escolhe deliberadamente uma sessão que não é a do ingresso.
+    //
+    // O expect.poll antes do count() não é excesso de zelo: a lista de sessões
+    // chega por API depois da hidratação, e `count()` lê UMA vez. Lendo cedo
+    // demais ele devolvia 0, o índice virava -1 e o selectOption ficava um
+    // minuto inteiro procurando uma opção que não existe.
     const opcoes = page.locator("#evento option");
+    await expect.poll(() => opcoes.count()).toBeGreaterThan(2);
     await page.selectOption("#evento", { index: (await opcoes.count()) - 1 });
 
     await page.locator("#manual").fill(codigo);
     await page.getByRole("button", { name: "Validar" }).click();
     const painel = page.locator("div[role=alert].fixed");
-    await expect(painel.getByRole("heading")).toHaveText("Evento errado");
+    await expect(painel.getByRole("heading")).toHaveText("Outra sessão");
     // Precisa dizer de QUAL evento é, senão a portaria não sabe para onde mandar.
     await expect(painel).toContainText("Este ingresso é de:");
   });

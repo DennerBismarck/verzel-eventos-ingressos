@@ -51,9 +51,11 @@ test.describe("compra de pista", () => {
     await page.getByRole("button", { name: /Ampliar/ }).first().click();
     const dialogo = page.getByRole("dialog");
     await expect(dialogo.locator("svg").first()).toBeVisible();
-    // O código impresso permite entrar quando a câmera falha.
+    // O código impresso permite entrar quando a câmera falha. São 8 caracteres
+    // de um alfabeto sem O/0 e I/1 — o UUID de 36 saiu da tela de propósito,
+    // porque ninguém dita 36 caracteres com hífen numa fila de entrada.
     await expect(dialogo.locator(".font-mono").first()).toHaveText(
-      /^[0-9a-f-]{36}$/,
+      /^[A-HJ-NP-Z2-9]{8}$/,
     );
   });
 
