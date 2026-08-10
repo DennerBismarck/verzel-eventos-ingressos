@@ -358,3 +358,60 @@ class ThrottleTest(APITestCase):
         """É o endpoint que o monitoramento da Render bate de minuto em minuto."""
         codigos = {self.client.get(reverse("health")).status_code for _ in range(30)}
         self.assertEqual(codigos, {status.HTTP_200_OK})
+
+
+class LimiteContaSoErro(APITestCase):
+    """
+    O limite de login conta só o que FALHA.
+
+    Antes, acerto e erro gastavam a mesma cota. Quem entrasse no celular, no
+    tablet e no computador consumia o orçamento junto com o atacante — e o
+    atacante não perdia nada com isso, porque ele erra de qualquer jeito.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(
+            email="alvo@b.dev", password=SENHA, full_name="Alvo"
+        )
+        self.url = reverse("login")
+
+    def test_logins_certos_em_sequencia_nao_esbarram_no_limite(self):
+        codigos = [
+            self.client.post(
+                self.url, {"email": "alvo@b.dev", "password": SENHA}, format="json"
+            ).status_code
+            for _ in range(25)
+        ]
+        self.assertEqual(set(codigos), {status.HTTP_200_OK})
+
+    def test_acerto_no_meio_nao_devolve_cota_ao_atacante(self):
+        """
+        A propriedade que não pode se perder: um acerto no meio da rajada não
+        limpa nem adia o histórico de erros. Senão bastaria intercalar um login
+        válido de outra conta... — e, mais simples ainda, o próprio contador
+        deixaria de somar.
+        """
+        errado = {"email": "alvo@b.dev", "password": "errada"}
+        for _ in range(9):
+            self.client.post(self.url, errado, format="json")
+
+        r = self.client.post(
+            self.url, {"email": "alvo@b.dev", "password": SENHA}, format="json"
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+
+        # O décimo erro fecha a porta, mesmo com o acerto no meio.
+        codigos = [
+            self.client.post(self.url, errado, format="json").status_code
+            for _ in range(3)
+        ]
+        self.assertIn(status.HTTP_429_TOO_MANY_REQUESTS, codigos)
+
+    def test_corpo_sem_senha_tambem_gasta_cota(self):
+        """Martelar o endpoint com lixo é tentativa igual — e conta como uma."""
+        codigos = [
+            self.client.post(self.url, {"email": "alvo@b.dev"}, format="json").status_code
+            for _ in range(14)
+        ]
+        self.assertIn(status.HTTP_429_TOO_MANY_REQUESTS, codigos)

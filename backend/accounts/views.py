@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import AuthenticationFailed, ValidationError
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
@@ -37,6 +38,34 @@ class LoginView(TokenObtainPairView):
     # IP: um atacante rotaciona endereço com facilidade, mas o e-mail que ele
     # quer invadir continua o mesmo. Ver accounts/throttling.py.
     throttle_classes = [ForcaBrutaThrottle]
+
+    def check_throttles(self, request):
+        """
+        Igual ao do DRF, com uma diferença: guarda as instâncias.
+
+        O `check_throttles` original cria os throttles, usa e descarta. Aqui
+        eles precisam sobreviver até depois da resposta, porque quem sabe se a
+        credencial prestava é o serializer — e é esse desfecho que decide se a
+        tentativa gasta cota.
+        """
+        self.limites = self.get_throttles()
+        esperas = [
+            limite.wait()
+            for limite in self.limites
+            if not limite.allow_request(request, self)
+        ]
+        if esperas:
+            self.throttled(request, max((e for e in esperas if e is not None), default=None))
+
+    def post(self, request, *args, **kwargs):
+        try:
+            return super().post(request, *args, **kwargs)
+        except (AuthenticationFailed, ValidationError):
+            # Senha errada, e-mail que não existe ou corpo sem os campos: as
+            # três formas de martelar a porta. Só aqui a cota é gasta.
+            for limite in self.limites:
+                limite.registrar_falha()
+            raise
 
 
 class RefreshView(TokenRefreshView):

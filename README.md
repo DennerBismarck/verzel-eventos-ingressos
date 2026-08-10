@@ -160,6 +160,7 @@ o enunciado pede a confirmação **e** a recusa no front, não só no servidor.
 | Medida | Por quê |
 |--------|---------|
 | **Rate limit por escopo** — auth 10/min, gate 120/min, catálogo 30/min | Riscos diferentes. Apertar a portaria atrapalharia uma entrada movimentada; afrouxar o login abre força bruta |
+| **No login, só a tentativa que FALHA gasta cota** | Força bruta é uma sequência de erros. Cobrar do acerto punia quem entra no celular, no tablet e no computador — e não tirava nada de quem erra de qualquer jeito |
 | **Rotação de refresh + blacklist** | Um refresh vazado só serve até a vítima usar o dela. `POST /api/auth/logout` revoga de verdade |
 | **HSTS, nosniff, X-Frame-Options, Referrer-Policy, SSL redirect** | Só fora de `DEBUG`: HSTS em desenvolvimento prende o navegador em https por um ano |
 | **Permissão padrão `IsAuthenticated`** | Fail closed — esquecer a permissão numa view nova fecha a porta |
@@ -209,17 +210,21 @@ dublê. Teste que depende de API de terceiro falha quando o terceiro cai, gasta
 cota a cada execução e não roda sem chave — deixa de ser teste e vira
 monitoramento.
 
-#### Ponta a ponta — 32 testes
+#### Ponta a ponta — 36 testes
 
 ```bash
-# em um terminal — THROTTLE_AUTH_RATE afrouxado porque a suíte loga muitas
-# vezes do MESMO IP e bateria no limite de força bruta (10/min em produção)
-cd backend && python manage.py seed
-THROTTLE_AUTH_RATE=1000/min python manage.py runserver
+# em um terminal
+cd backend && python manage.py seed && python manage.py runserver
 
 # em outro
 cd frontend && npm run test:e2e
 ```
+
+Roda com o **limite de força bruta de produção**, sem afrouxar nada. Antes era
+preciso subir o backend com `THROTTLE_AUTH_RATE=1000/min`, porque a suíte entra
+e sai dezenas de vezes nas mesmas contas. Deixou de ser necessário quando o
+limite passou a contar só a tentativa que falha — ou seja, o contorno sumiu
+porque o controle ficou mais correto, não mais frouxo.
 
 Playwright contra a aplicação real: Next servindo o front, Django falando com o
 Postgres. **Nada é dublado** — o que estes testes provam é justamente a costura

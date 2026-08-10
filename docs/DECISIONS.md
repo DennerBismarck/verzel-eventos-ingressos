@@ -334,6 +334,28 @@ coisas diferentes.
 borda. O seed é código: se ele só produz eventos futuros, a metade do sistema
 que lida com o passado nunca é exercitada.
 
+### Dia 7 — o limite de login cobrava do usuário certo
+
+A suíte de E2E começou a levar 429 no login. O primeiro impulso é afrouxar o
+limite; o correto era perguntar o que ele estava contando.
+
+Estava contando **acerto junto com erro**. Força bruta é, por definição, uma
+sequência de erros — quem acerta a senha não está adivinhando. Cobrar cota do
+acerto punia o uso legítimo (a pessoa que entra no celular, no tablet e no
+computador gastava o mesmo orçamento do atacante) sem tirar nada do atacante,
+que erra de qualquer jeito.
+
+Agora o `allow_request` só CONSULTA o histórico; quem grava é a view, depois de
+saber que a credencial não prestava — é a única camada que conhece o desfecho.
+Não abre brecha: quem já tem a senha certa não precisa de força bruta.
+
+O teste que garante isso não é "25 logins certos passam". É o outro: **um
+acerto no meio da rajada não devolve cota** ao atacante. Nove erros, um acerto,
+e o décimo erro ainda fecha a porta.
+
+**Aprendizado:** quando um controle de segurança atrapalha o uso legítimo, às
+vezes o problema não é a intensidade — é a métrica.
+
 ### Dia 7 — a suíte de E2E falhou inteira, e a culpa não era do código
 
 17 de 17 testes falharam com "elemento não encontrado". O motivo: o Next
