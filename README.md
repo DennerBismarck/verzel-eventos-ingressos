@@ -188,5 +188,10 @@ Artefatos de contexto usados com a IA estão versionados em [`docs/`](docs/).
 ## O que faltou / não funciona como esperado
 _(seja honesto aqui — o enunciado diz que a ausência de explicação penaliza)_
 
+- **Cobertura da Ticketmaster no Brasil é fraca.** A Discovery API é
+  majoritariamente EUA/Europa, então buscar por cidade brasileira costuma voltar
+  vazio. Não é bug de integração — é o catálogo deles. Para demonstrar, busque
+  termos internacionais (`coldplay`, `eagles`, `nba`). O TMDb, esse sim, responde
+  em português e cobre bem o catálogo de filmes.
 - Fluxo de compra, ingresso com QR e portaria: em construção (Dias 1–4).
 - Mapa de assentos: planejado para o Dia 5, depois do fluxo de pista estar no ar.
