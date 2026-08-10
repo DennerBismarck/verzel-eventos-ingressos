@@ -43,7 +43,13 @@ class TicketmasterProvider(CatalogProvider):
         except requests.Timeout as exc:
             raise CatalogError("Ticketmaster não respondeu a tempo.") from exc
         except requests.RequestException as exc:
-            logger.exception("Falha ao consultar a Ticketmaster")
+            # Mesmo motivo do tmdb.py: a chave vai na query string (?apikey=),
+            # então o traceback do requests vazaria o segredo para o log.
+            logger.error(
+                "Falha ao consultar a Ticketmaster (tipo=%s, status=%s)",
+                type(exc).__name__,
+                getattr(exc.response, "status_code", "sem resposta"),
+            )
             raise CatalogError("Falha ao consultar a Ticketmaster.") from exc
 
         # A Ticketmaster segue HAL: os dados vêm aninhados em "_embedded".

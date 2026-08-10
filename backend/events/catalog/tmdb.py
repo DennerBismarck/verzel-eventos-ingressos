@@ -47,9 +47,16 @@ class TMDbProvider(CatalogProvider):
         except requests.Timeout as exc:
             raise CatalogError("TMDb não respondeu a tempo.") from exc
         except requests.RequestException as exc:
-            # logger.exception guarda o traceback no nosso log; a mensagem que
-            # sobe é genérica, porque a URL contém a api_key.
-            logger.exception("Falha ao consultar o TMDb")
+            # NÃO usar logger.exception aqui. O traceback inclui a mensagem do
+            # requests, que traz a URL — e no TMDb a autenticação vai na query
+            # string (?api_key=...). Isso escreveria a chave de produção nos
+            # logs da Render, onde ela não deveria existir em hipótese alguma.
+            # Registramos só o que ajuda a diagnosticar: tipo e status.
+            logger.error(
+                "Falha ao consultar o TMDb (tipo=%s, status=%s)",
+                type(exc).__name__,
+                getattr(exc.response, "status_code", "sem resposta"),
+            )
             raise CatalogError("Falha ao consultar o TMDb.") from exc
 
         items = [self._to_item(raw) for raw in payload.get("results", [])[:limit]]
