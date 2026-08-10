@@ -16,7 +16,7 @@ from django.db import connection, transaction
 from django.test import TestCase, TransactionTestCase
 from django.utils import timezone
 
-from events.models import Event
+from events.models import Event, Seat
 
 from . import services
 from .models import Reservation, Ticket
@@ -145,6 +145,175 @@ class NoDoubleSellTest(TransactionTestCase):
             f"\n    [com lock] o outro teste: exatamente {evento.capacity} aprovados, "
             f"contador exato."
         )
+
+
+def _make_seated(seats=6, price="80.00", slug="a"):
+    """
+    Evento com lugar marcado e um mapa pronto.
+
+    `slug` existe porque um teste monta DOIS eventos para provar que assento de
+    outro evento não entra na reserva — e o e-mail do organizador é único.
+    """
+    org = User.objects.create_user(
+        email=f"orgs-{slug}@t.dev", password="x", full_name="Org", role=User.Role.ORGANIZER
+    )
+    evento = Event.objects.create(
+        organizer=org,
+        source=Event.Source.TICKETMASTER,
+        external_id=f"s-{slug}",
+        title="Peça de Teste",
+        venue="Teatro",
+        starts_at=timezone.now() + timedelta(days=5),
+        kind=Event.Kind.SEATED,
+        status=Event.Status.PUBLISHED,
+        price=Decimal("0.00"),
+        capacity=seats,
+    )
+    Seat.objects.bulk_create(
+        [
+            Seat(event=evento, section="Plateia", row="A", number=n, price=Decimal(price))
+            for n in range(1, seats + 1)
+        ]
+    )
+    return org, evento
+
+
+class AssentoConcorrenciaTest(TransactionTestCase):
+    """A mesma disputa do double-sell, agora sobre a linha do assento."""
+
+    def test_dez_clientes_disputando_a_mesma_poltrona(self):
+        _, evento = _make_seated(seats=1)
+        assento = evento.seats.first()
+        clientes = [
+            User.objects.create_user(
+                email=f"s{i}@t.dev", password="x", full_name=f"S{i}", role=User.Role.CUSTOMER
+            )
+            for i in range(10)
+        ]
+
+        largada = threading.Barrier(len(clientes))
+        vitorias = []
+        trava = threading.Lock()
+
+        def tentar(cliente):
+            largada.wait()
+            try:
+                services.create_reservation(
+                    customer=cliente, event_id=evento.pk, seat_ids=[assento.pk]
+                )
+                ok = True
+            except services.ReservationError:
+                ok = False
+            finally:
+                connection.close()
+            with trava:
+                vitorias.append(ok)
+
+        threads = [threading.Thread(target=tentar, args=(c,)) for c in clientes]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assento.refresh_from_db()
+        evento.refresh_from_db()
+        self.assertEqual(sum(vitorias), 1, "só um cliente pode levar a poltrona")
+        self.assertEqual(assento.status, Seat.Status.SOLD)
+        self.assertEqual(evento.sold_count, 1)
+        self.assertEqual(Reservation.objects.count(), 1)
+
+
+class AssentoTest(TestCase):
+    def setUp(self):
+        _, self.evento = _make_seated(seats=6)
+        self.cliente = User.objects.create_user(
+            email="cs@t.dev", password="x", full_name="Cs", role=User.Role.CUSTOMER
+        )
+        self.outro = User.objects.create_user(
+            email="cs2@t.dev", password="x", full_name="Cs2", role=User.Role.CUSTOMER
+        )
+        self.assentos = list(self.evento.seats.order_by("number"))
+
+    def test_reserva_marca_os_assentos_e_soma_o_preco_deles(self):
+        r = services.create_reservation(
+            customer=self.cliente,
+            event_id=self.evento.pk,
+            seat_ids=[self.assentos[0].pk, self.assentos[1].pk],
+        )
+        self.assertEqual(r.quantity, 2)
+        # O preço vem do assento, não do campo price do evento (que é da pista).
+        self.assertEqual(r.total_price, Decimal("160.00"))
+        self.assertEqual(
+            list(self.evento.seats.filter(status=Seat.Status.SOLD).values_list("number", flat=True)),
+            [1, 2],
+        )
+
+    def test_sold_count_do_evento_acompanha_os_assentos(self):
+        """
+        Sem isto a vitrine mentiria: mostraria a sala inteira livre enquanto as
+        poltronas iam sendo vendidas, porque `available` lê o contador.
+        """
+        services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, seat_ids=[self.assentos[0].pk]
+        )
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.sold_count, 1)
+        self.assertEqual(self.evento.available, 5)
+
+    def test_tudo_ou_nada_quando_um_assento_ja_foi_levado(self):
+        services.create_reservation(
+            customer=self.outro, event_id=self.evento.pk, seat_ids=[self.assentos[1].pk]
+        )
+        with self.assertRaises(services.ReservationError):
+            services.create_reservation(
+                customer=self.cliente,
+                event_id=self.evento.pk,
+                seat_ids=[self.assentos[0].pk, self.assentos[1].pk, self.assentos[2].pk],
+            )
+        # Nem o assento 1 nem o 3 podem ter ficado presos numa reserva parcial.
+        for i in (0, 2):
+            self.assentos[i].refresh_from_db()
+            self.assertEqual(self.assentos[i].status, Seat.Status.AVAILABLE)
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.sold_count, 1)
+
+    def test_reserva_sem_assento_nenhum_e_recusada(self):
+        with self.assertRaises(services.ReservationError):
+            services.create_reservation(
+                customer=self.cliente, event_id=self.evento.pk, seat_ids=[]
+            )
+
+    def test_assento_de_outro_evento_nao_entra(self):
+        _, outro_evento = _make_seated(seats=2, slug="b")
+        with self.assertRaises(services.ReservationError):
+            services.create_reservation(
+                customer=self.cliente,
+                event_id=self.evento.pk,
+                seat_ids=[outro_evento.seats.first().pk],
+            )
+
+    def test_pagamento_emite_um_ingresso_por_poltrona(self):
+        r = services.create_reservation(
+            customer=self.cliente,
+            event_id=self.evento.pk,
+            seat_ids=[self.assentos[0].pk, self.assentos[3].pk],
+        )
+        _, tickets = services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+        self.assertEqual(len(tickets), 2)
+        self.assertEqual({t.seat.number for t in tickets}, {1, 4})
+
+    def test_cancelar_devolve_a_poltrona_e_o_contador(self):
+        r = services.create_reservation(
+            customer=self.cliente,
+            event_id=self.evento.pk,
+            seat_ids=[self.assentos[0].pk, self.assentos[1].pk],
+        )
+        services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+        services.cancel_reservation(reservation_id=r.pk, customer=self.cliente)
+
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.sold_count, 0, "o contador também tem que voltar")
+        self.assertEqual(self.evento.seats.filter(status=Seat.Status.AVAILABLE).count(), 6)
 
 
 class SigningTest(TestCase):

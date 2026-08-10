@@ -127,6 +127,14 @@ def _reserve_seats(customer, event, seat_ids):
 
     Seat.objects.filter(id__in=[s.id for s in travados]).update(status=Seat.Status.SOLD)
 
+    # sold_count também sobe em evento com lugar marcado. A verdade sobre QUAL
+    # assento foi vendido está nas linhas de Seat; este contador existe para a
+    # vitrine responder "quantos restam" sem contar assentos a cada card — e
+    # para a CheckConstraint continuar valendo nos dois tipos de evento.
+    # A linha do evento já está travada por create_reservation.
+    event.sold_count += len(travados)
+    event.save(update_fields=["sold_count"])
+
     reservation = Reservation.objects.create(
         customer=customer,
         event=event,
@@ -231,11 +239,14 @@ def _release_stock(reservation):
     """Devolve os lugares. Chamado sempre DENTRO de uma transação já aberta."""
     assentos = list(reservation.seats.all())
 
+    # Em evento com lugar marcado, devolver o assento é só metade: o contador
+    # do evento também precisa voltar. Antes esta função retornava aqui e
+    # deixava sold_count inflado para sempre — a vitrine passaria a mostrar
+    # menos lugares do que existem, sem ninguém notar.
     if assentos:
         Seat.objects.filter(id__in=[s.id for s in assentos]).update(
             status=Seat.Status.AVAILABLE
         )
-        return
 
     # F() faz a subtração NO BANCO ("sold_count = sold_count - 3") em vez de
     # em Python. Ler em Python, subtrair e gravar usaria um valor possivelmente
