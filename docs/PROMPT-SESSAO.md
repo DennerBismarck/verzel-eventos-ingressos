@@ -7,9 +7,7 @@ passar. Seja direto, honesto e me trate por "você". Responda em português.
 
 ## Quem eu sou
 Denner, desenvolvedor full-stack júnior (~3 anos): Python/Django/DRF e Node/Express no back, React/
-Next.js no front. Meu ponto fraco, apontado pelo meu mentor, é DEPENDÊNCIA DE IA. Depois deste projeto
-tem uma entrevista de defesa onde vão me questionar sobre cada decisão. Então eu preciso ENTENDER e
-saber DEFENDER tudo.
+Next.js no front. Eu preciso ENTENDER e saber DEFENDER tudo.
 
 ## O desafio (Verzel — Elite Dev)
 Construir uma **Plataforma de Eventos e Ingressos**: um organizador publica eventos a partir de um
