@@ -73,6 +73,28 @@ export function limparSessao() {
   avisar();
 }
 
+/**
+ * A sessão só é aceita se tiver TUDO que a interface vai usar.
+ *
+ * Não é paranoia: o cabeçalho faz `user.full_name.charAt(0)` para desenhar a
+ * inicial no avatar. Um objeto sem `full_name` — gravado por uma versão
+ * anterior do app, ou com o storage adulterado — derruba a árvore React
+ * inteira e o usuário vê tela branca, sem sequer conseguir sair.
+ *
+ * Diante de sessão malformada, o certo é descartá-la e começar deslogado.
+ */
+function sessaoValida(dados: unknown): dados is NonNullable<Sessao> {
+  const s = dados as NonNullable<Sessao> | null;
+  return Boolean(
+    s?.access &&
+      s?.refresh &&
+      s?.user &&
+      typeof s.user.full_name === "string" &&
+      typeof s.user.email === "string" &&
+      typeof s.user.role === "string",
+  );
+}
+
 /** Chamado uma vez, depois da hidratação. */
 export function carregarSessao() {
   if (carregada) return;
@@ -80,9 +102,9 @@ export function carregarSessao() {
   try {
     const cru = localStorage.getItem(CHAVE);
     if (cru) {
-      const dados = JSON.parse(cru) as Sessao;
-      // Sessão gravada por uma versão anterior do app pode não ter refresh.
-      if (dados?.access && dados?.refresh && dados?.user) sessao = dados;
+      const dados = JSON.parse(cru);
+      if (sessaoValida(dados)) sessao = dados;
+      else localStorage.removeItem(CHAVE);
     }
   } catch {
     /* JSON corrompido ou storage bloqueado: entra deslogado */
