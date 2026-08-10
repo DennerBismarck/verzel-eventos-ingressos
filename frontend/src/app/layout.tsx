@@ -37,19 +37,57 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           </main>
 
           <footer className="mt-16 border-t border-line bg-white">
-            <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-8 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
-              <p>
-                <strong className="font-semibold text-ink">ingressa</strong> — projeto
-                de demonstração. Nenhuma cobrança é real.
-              </p>
-              <p className="flex gap-4">
-                <Link href="/portaria" className="hover:text-brand">
-                  Portaria
-                </Link>
-                <Link href="/organizador" className="hover:text-brand">
-                  Organizadores
-                </Link>
-              </p>
+            <div className="mx-auto max-w-6xl px-4 py-8">
+              <div className="flex flex-col gap-2 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
+                <p>
+                  <strong className="font-semibold text-ink">ingressa</strong> — projeto
+                  de demonstração. Nenhuma cobrança é real.
+                </p>
+                <p className="flex gap-4">
+                  <Link href="/portaria" className="hover:text-brand">
+                    Portaria
+                  </Link>
+                  <Link href="/organizador" className="hover:text-brand">
+                    Organizadores
+                  </Link>
+                </p>
+              </div>
+
+              {/*
+                Atribuição EXIGIDA pelos termos de uso da API do TMDb: o aviso
+                com esta redação e o logo. Não é cortesia — é condição para usar
+                o catálogo deles.
+              */}
+              <div className="mt-6 flex flex-col gap-3 border-t border-line pt-6 sm:flex-row sm:items-center">
+                <a
+                  href="https://www.themoviedb.org/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src="/tmdb.svg"
+                    alt="The Movie Database (TMDB)"
+                    width={128}
+                    height={17}
+                    className="h-4 w-auto"
+                  />
+                </a>
+                <p className="text-xs text-muted">
+                  Este produto usa a API do TMDB, mas não é endossado nem certificado
+                  pelo TMDB. Dados de shows fornecidos pela{" "}
+                  <a
+                    href="https://developer.ticketmaster.com/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline hover:text-brand"
+                  >
+                    Ticketmaster Discovery API
+                  </a>
+                  .
+                </p>
+              </div>
             </div>
           </footer>
         </AuthProvider>
