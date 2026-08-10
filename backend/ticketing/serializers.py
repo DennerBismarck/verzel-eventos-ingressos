@@ -77,6 +77,33 @@ class ReservationSerializer(serializers.ModelSerializer):
         )
 
 
+class SaleSerializer(serializers.ModelSerializer):
+    """
+    Uma venda vista pelo ORGANIZADOR do evento.
+
+    Aqui o nome e o e-mail do comprador aparecem — o organizador precisa deles
+    para dar suporte a quem não achou o ingresso, e é ele quem responde pelo
+    evento. O que continua fora: o `code` do ingresso. Nem o dono do evento
+    precisa do que abre a catraca; para isso existe a portaria.
+    """
+
+    customer_name = serializers.CharField(source="customer.full_name", read_only=True)
+    customer_email = serializers.EmailField(source="customer.email", read_only=True)
+    tickets_used = serializers.IntegerField(read_only=True)
+    tickets_total = serializers.IntegerField(read_only=True)
+    seats = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Reservation
+        fields = (
+            "id", "customer_name", "customer_email", "status", "quantity",
+            "total_price", "created_at", "tickets_used", "tickets_total", "seats",
+        )
+
+    def get_seats(self, obj):
+        return [str(s) for s in obj.seats.all()]
+
+
 class GateValidateSerializer(serializers.Serializer):
     # O conteúdo lido do QR ("codigo.assinatura") OU o código digitado à mão.
     payload = serializers.CharField()

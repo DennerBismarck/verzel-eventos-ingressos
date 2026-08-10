@@ -14,6 +14,8 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.db import connection, transaction
 from django.test import TestCase, TransactionTestCase
+from django.test.utils import CaptureQueriesContext
+from django.urls import reverse
 from django.utils import timezone
 
 from events.models import Event, Seat
@@ -314,6 +316,134 @@ class AssentoTest(TestCase):
         self.evento.refresh_from_db()
         self.assertEqual(self.evento.sold_count, 0, "o contador também tem que voltar")
         self.assertEqual(self.evento.seats.filter(status=Seat.Status.AVAILABLE).count(), 6)
+
+
+class VendasDoOrganizadorTest(TestCase):
+    """O painel de vendas: resumo do evento e quem comprou."""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.client = APIClient()
+        self.org, self.evento = _make_world(capacity=20, price="30.00")
+        self.outro_org = User.objects.create_user(
+            email="org2@t.dev", password="x", full_name="Org2", role=User.Role.ORGANIZER
+        )
+        self.cliente = User.objects.create_user(
+            email="comprador@t.dev", password="x", full_name="Caio", role=User.Role.CUSTOMER
+        )
+        self.portaria = User.objects.create_user(
+            email="pt@t.dev", password="x", full_name="Pedro", role=User.Role.GATE
+        )
+        self.url = reverse("organizer-sales", args=[self.evento.pk])
+
+    def _comprar(self, quantidade=2, pagar=True):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=quantidade
+        )
+        if pagar:
+            _, tickets = services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+            return r, tickets
+        return r, []
+
+    def test_resumo_conta_receita_ingressos_e_validados(self):
+        _, tickets = self._comprar(3)
+        services.validate_ticket(
+            payload=tickets[0].qr_payload, event_id=self.evento.pk, gate_user=self.portaria
+        )
+
+        self.client.force_authenticate(self.org)
+        resumo = self.client.get(self.url).json()["summary"]
+
+        self.assertEqual(resumo["sold_count"], 3)
+        self.assertEqual(resumo["available"], 17)
+        self.assertEqual(resumo["revenue"], "90.00")
+        self.assertEqual(resumo["tickets_issued"], 3)
+        self.assertEqual(resumo["tickets_used"], 1)
+
+    def test_receita_conta_so_reserva_paga(self):
+        """
+        Pendente ainda pode ser recusada; recusada e cancelada nunca entraram.
+        Somar tudo inflaria o faturamento do organizador.
+        """
+        self._comprar(2, pagar=True)
+        self._comprar(1, pagar=False)
+        cancelada, _ = self._comprar(1, pagar=True)
+        services.cancel_reservation(reservation_id=cancelada.pk, customer=self.cliente)
+
+        self.client.force_authenticate(self.org)
+        resumo = self.client.get(self.url).json()["summary"]
+        self.assertEqual(resumo["revenue"], "60.00")
+        self.assertEqual(resumo["paid_reservations"], 1)
+
+    def test_lista_traz_o_comprador_mas_nao_o_codigo_do_ingresso(self):
+        self._comprar(2)
+        self.client.force_authenticate(self.org)
+        venda = self.client.get(self.url).json()["sales"][0]
+
+        self.assertEqual(venda["customer_name"], "Caio")
+        self.assertEqual(venda["customer_email"], "comprador@t.dev")
+        self.assertEqual(venda["tickets_total"], 2)
+        # Nem o dono do evento recebe o que abre a catraca.
+        self.assertNotIn("code", str(venda))
+        self.assertNotIn("qr_payload", venda)
+
+    def test_conta_ingressos_usados_por_reserva(self):
+        _, tickets = self._comprar(3)
+        services.validate_ticket(
+            payload=tickets[0].qr_payload, event_id=self.evento.pk, gate_user=self.portaria
+        )
+        self.client.force_authenticate(self.org)
+        venda = self.client.get(self.url).json()["sales"][0]
+        self.assertEqual(venda["tickets_used"], 1)
+        self.assertEqual(venda["tickets_total"], 3)
+
+    def test_vendas_de_evento_alheio_devolvem_404(self):
+        self.client.force_authenticate(self.outro_org)
+        self.assertEqual(self.client.get(self.url).status_code, 404)
+
+    def test_cliente_e_portaria_nao_veem_vendas(self):
+        for user in (self.cliente, self.portaria):
+            with self.subTest(user=user.email):
+                self.client.force_authenticate(user)
+                self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_anonimo_leva_401(self):
+        self.assertEqual(self.client.get(self.url).status_code, 401)
+
+    def test_evento_sem_venda_devolve_resumo_zerado(self):
+        self.client.force_authenticate(self.org)
+        corpo = self.client.get(self.url).json()
+        self.assertEqual(corpo["sales"], [])
+        self.assertEqual(corpo["summary"]["revenue"], "0.00")
+        self.assertEqual(corpo["summary"]["tickets_issued"], 0)
+
+    def test_numero_de_queries_nao_cresce_com_as_vendas(self):
+        """
+        As colunas de ingresso são ANOTADAS no banco. Sem isso, cada reserva
+        custaria queries extras e o painel ficaria mais lento exatamente à
+        medida que o evento vendesse mais — o pior momento possível.
+
+        A asserção compara 1 venda contra 6, em vez de cravar um número: um
+        número fixo quebraria a cada middleware ou índice novo, sem que nada
+        de errado tivesse acontecido.
+        """
+        self.client.force_authenticate(self.org)
+
+        self._comprar(1)
+        with CaptureQueriesContext(connection) as com_uma:
+            self.client.get(self.url)
+
+        for _ in range(5):
+            self._comprar(1)
+        with CaptureQueriesContext(connection) as com_seis:
+            self.client.get(self.url)
+
+        self.assertEqual(
+            len(com_uma), len(com_seis),
+            f"1 venda usou {len(com_uma)} queries e 6 usaram {len(com_seis)}: "
+            "o painel está com N+1",
+        )
 
 
 class SigningTest(TestCase):

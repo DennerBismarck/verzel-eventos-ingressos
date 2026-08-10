@@ -5,6 +5,10 @@ Todas as regras moram em services.py. Aqui só se traduz HTTP: ler o request,
 chamar o serviço, transformar ReservationError em 409.
 """
 
+from decimal import Decimal
+
+from django.db.models import Count, Q, Sum
+from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.decorators import action
@@ -13,7 +17,8 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
-from accounts.permissions import IsCustomer, IsGate
+from accounts.permissions import IsCustomer, IsGate, IsOrganizer
+from events.models import Event
 
 from . import services
 from .models import Reservation, Ticket
@@ -22,6 +27,7 @@ from .serializers import (
     PaymentSerializer,
     ReservationCreateSerializer,
     ReservationSerializer,
+    SaleSerializer,
     SharedTicketSerializer,
     TicketSerializer,
 )
@@ -124,6 +130,68 @@ class SharedTicketView(generics.RetrieveAPIView):
     permission_classes = (AllowAny,)
     lookup_field = "share_token"
     queryset = Ticket.objects.select_related("event", "customer", "seat")
+
+
+class OrganizerSalesView(APIView):
+    """
+    Vendas de UM evento do organizador logado.
+
+    Resumo + lista de compradores. Existe porque o painel mostrava o contador
+    subindo e nada mais: o organizador via "112/200 vendidos" sem saber quem
+    comprou, quanto entrou, nem quantos já passaram pela portaria.
+    """
+
+    permission_classes = (IsOrganizer,)
+
+    @extend_schema(responses=SaleSerializer(many=True))
+    def get(self, request, pk):
+        # get_object_or_404 com organizer=request.user: evento de outro
+        # organizador não existe para este usuário. Mesmo padrão do ViewSet —
+        # 404, e não 403, para não confirmar que o evento existe.
+        evento = get_object_or_404(Event, pk=pk, organizer=request.user)
+
+        reservas = (
+            evento.reservations.select_related("customer")
+            .prefetch_related("seats")
+            # Anota no BANCO em vez de contar em Python: sem isto seriam duas
+            # queries por reserva só para preencher as colunas de ingressos.
+            .annotate(
+                tickets_total=Count("tickets", distinct=True),
+                tickets_used=Count(
+                    "tickets",
+                    filter=Q(tickets__status=Ticket.Status.USED),
+                    distinct=True,
+                ),
+            )
+        )
+
+        pagas = evento.reservations.filter(status=Reservation.Status.PAID)
+        emitidos = Ticket.objects.filter(event=evento)
+
+        resumo = {
+            "event_id": evento.pk,
+            "event_title": evento.title,
+            "capacity": evento.capacity,
+            "sold_count": evento.sold_count,
+            "available": evento.available,
+            # Só reserva PAGA vira receita. Pendente ainda pode ser recusada,
+            # e recusada/cancelada nunca entrou.
+            #
+            # str() com 2 casas, e não o Decimal cru: num dicionário solto o
+            # renderizador do DRF serializa Decimal como NÚMERO JSON, e o
+            # JavaScript o lê como float — justamente o que DecimalField evita
+            # no resto da API. Dinheiro trafega como string aqui também.
+            "revenue": str(
+                (pagas.aggregate(t=Sum("total_price"))["t"] or Decimal("0")).quantize(
+                    Decimal("0.01")
+                )
+            ),
+            "paid_reservations": pagas.count(),
+            "tickets_issued": emitidos.count(),
+            "tickets_used": emitidos.filter(status=Ticket.Status.USED).count(),
+        }
+
+        return Response({"summary": resumo, "sales": SaleSerializer(reservas, many=True).data})
 
 
 class GateValidateView(APIView):
