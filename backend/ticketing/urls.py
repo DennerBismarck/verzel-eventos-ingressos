@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from .views import (
     GateEventsView,
+    GateUndoView,
     GateValidateView,
     MyTicketsView,
     OrganizerSalesView,
@@ -23,5 +24,6 @@ urlpatterns = [
     path("shared/<uuid:share_token>", SharedTicketView.as_view(), name="shared-ticket"),
     path("gate/events", GateEventsView.as_view(), name="gate-events"),
     path("gate/validate", GateValidateView.as_view(), name="gate-validate"),
+    path("gate/undo", GateUndoView.as_view(), name="gate-undo"),
     path("", include(router.urls)),
 ]

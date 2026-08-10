@@ -8,10 +8,31 @@ A reserva já segura o estoque no momento em que é criada, ANTES do pagamento.
 conflito na hora de pagar. O estoque é liberado se a reserva for cancelada.
 """
 
+import secrets
 import uuid
 
 from django.conf import settings
 from django.db import models
+
+# Alfabeto sem caracteres que se confundem quando alguém digita olhando para um
+# papel amassado numa fila: sem O/0, sem I/1/l. Restam 32 símbolos.
+ALFABETO_CODIGO = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+TAMANHO_CODIGO = 8
+
+
+def gerar_codigo_curto() -> str:
+    """
+    Código para digitação manual na portaria.
+
+    32^8 ≈ 1,1 trilhão de combinações. Não substitui o QR assinado — é uma
+    alternativa para quando a câmera falha, e por isso vale discutir o risco:
+    adivinhar um código exige credencial de portaria E passar pelo limite de
+    120 tentativas/min, o que torna a busca inviável na prática.
+
+    O QR continua sendo o caminho forte, com HMAC. Este é o caminho degradado,
+    protegido por autenticação e rate limit em vez de assinatura.
+    """
+    return "".join(secrets.choice(ALFABETO_CODIGO) for _ in range(TAMANHO_CODIGO))
 
 
 class Reservation(models.Model):
@@ -125,6 +146,18 @@ class Ticket(models.Model):
     # O código que vai dentro do QR, junto com a assinatura HMAC.
     # uuid4 é aleatório (não sequencial): ninguém enumera ingressos chutando.
     code = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+
+    # Código curto para digitação manual na portaria. O UUID de 36 caracteres
+    # é impossível de ditar numa fila de gente esperando para entrar.
+    # unique=True já cria o índice; db_index junto seria redundante — e, numa
+    # migration de três passos, faz o Django tentar criar o índice "_like" duas
+    # vezes e quebrar com "relation already exists".
+    short_code = models.CharField(
+        max_length=TAMANHO_CODIGO,
+        unique=True,
+        default=gerar_codigo_curto,
+        editable=False,
+    )
 
     # Token do link de compartilhamento. SEPARADO do `code` de propósito:
     # quem recebe o link consegue VER o ingresso, mas o que valida a entrada é

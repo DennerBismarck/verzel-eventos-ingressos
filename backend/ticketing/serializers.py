@@ -23,8 +23,9 @@ class TicketSerializer(serializers.ModelSerializer):
     class Meta:
         model = Ticket
         fields = (
-            "id", "code", "status", "used_at", "qr_payload", "share_token",
-            "event", "event_title", "event_starts_at", "venue", "seat_label",
+            "id", "code", "short_code", "status", "used_at", "qr_payload",
+            "share_token", "event", "event_title", "event_starts_at", "venue",
+            "seat_label",
         )
 
     def get_seat_label(self, obj):
@@ -115,3 +116,9 @@ class GateValidateSerializer(serializers.Serializer):
     # A portaria escolhe o evento na tela antes de começar a validar. Sem isso
     # não dá para responder "evento errado" — que é um dos 4 retornos exigidos.
     event = serializers.IntegerField()
+
+
+class GateUndoSerializer(serializers.Serializer):
+    """O `code` do ingresso a devolver ao estado válido."""
+
+    code = serializers.CharField()

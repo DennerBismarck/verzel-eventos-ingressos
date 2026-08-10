@@ -853,3 +853,181 @@ class ConsultasTest(TestCase):
             len(poucos), len(muitos),
             "a vitrine é a página mais acessada: N+1 aqui é o pior lugar possível",
         )
+
+
+class PortariaCodigoCurtoTest(TestCase):
+    """Validação pelo código de 8 caracteres — a alternativa à câmera."""
+
+    def setUp(self):
+        _, self.evento = _make_world(capacity=10)
+        self.cliente = User.objects.create_user(
+            email="cc@t.dev", password="x", full_name="C", role=User.Role.CUSTOMER
+        )
+        self.portaria = User.objects.create_user(
+            email="pcc@t.dev", password="x", full_name="P", role=User.Role.GATE
+        )
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=1
+        )
+        _, tickets = services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+        self.ticket = tickets[0]
+
+    def _validar(self, valor):
+        return services.validate_ticket(
+            payload=valor, event_id=self.evento.pk, gate_user=self.portaria
+        )
+
+    def test_codigo_curto_tem_oito_caracteres_sem_ambiguos(self):
+        from ticketing.models import ALFABETO_CODIGO
+
+        self.assertEqual(len(self.ticket.short_code), 8)
+        # Sem O/0 e I/1: quem digita olhando um papel amassado não erra por isso.
+        self.assertTrue(set(self.ticket.short_code) <= set(ALFABETO_CODIGO))
+        for proibido in "O0I1":
+            self.assertNotIn(proibido, ALFABETO_CODIGO)
+
+    def test_valida_pelo_codigo_curto(self):
+        resultado, _, _ = self._validar(self.ticket.short_code)
+        self.assertEqual(resultado, services.GateResult.VALID)
+
+    def test_codigo_curto_e_aceito_em_minusculas(self):
+        """Teclado de celular capitaliza sozinho — e às vezes não."""
+        outro = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=1
+        )
+        _, tickets = services.pay_reservation(reservation_id=outro.pk, customer=self.cliente)
+        resultado, _, _ = self._validar(tickets[0].short_code.lower())
+        self.assertEqual(resultado, services.GateResult.VALID)
+
+    def test_uuid_completo_continua_funcionando(self):
+        resultado, _, _ = self._validar(str(self.ticket.code))
+        self.assertEqual(resultado, services.GateResult.VALID)
+
+    def test_qr_assinado_continua_funcionando(self):
+        resultado, _, _ = self._validar(self.ticket.qr_payload)
+        self.assertEqual(resultado, services.GateResult.VALID)
+
+    def test_codigo_curto_inexistente_e_invalido(self):
+        resultado, _, _ = self._validar("ZZZZ9999")
+        self.assertEqual(resultado, services.GateResult.INVALID)
+
+
+class PortariaDesfazerTest(TestCase):
+    """
+    Desfazer existe porque a portaria erra: lê o QR da pessoa de trás, toca
+    duas vezes. Sem isso, a saída é o cliente ficar de fora ou alguém abrir o
+    admin do Django numa fila.
+    """
+
+    def setUp(self):
+        _, self.evento = _make_world(capacity=10)
+        self.cliente = User.objects.create_user(
+            email="cd@t.dev", password="x", full_name="C", role=User.Role.CUSTOMER
+        )
+        self.portaria = User.objects.create_user(
+            email="pd@t.dev", password="x", full_name="P", role=User.Role.GATE
+        )
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=1
+        )
+        _, tickets = services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+        self.ticket = tickets[0]
+        services.validate_ticket(
+            payload=self.ticket.qr_payload,
+            event_id=self.evento.pk,
+            gate_user=self.portaria,
+        )
+
+    def test_desfazer_devolve_o_ingresso_ao_estado_valido(self):
+        services.undo_validation(ticket_code=self.ticket.code, gate_user=self.portaria)
+        self.ticket.refresh_from_db()
+        self.assertEqual(self.ticket.status, Ticket.Status.VALID)
+        self.assertIsNone(self.ticket.used_at)
+        self.assertIsNone(self.ticket.used_by)
+
+    def test_depois_de_desfazer_o_ingresso_valida_de_novo(self):
+        services.undo_validation(ticket_code=self.ticket.code, gate_user=self.portaria)
+        resultado, _, _ = services.validate_ticket(
+            payload=self.ticket.qr_payload,
+            event_id=self.evento.pk,
+            gate_user=self.portaria,
+        )
+        self.assertEqual(resultado, services.GateResult.VALID)
+
+    def test_fora_da_janela_nao_desfaz(self):
+        """Passados 5 min a pessoa já entrou; reverter viraria reabrir a porta."""
+        Ticket.objects.filter(pk=self.ticket.pk).update(
+            used_at=timezone.now() - timedelta(minutes=6)
+        )
+        with self.assertRaises(services.ReservationError) as ctx:
+            services.undo_validation(ticket_code=self.ticket.code, gate_user=self.portaria)
+        self.assertIn("desfazer", str(ctx.exception).lower())
+
+    def test_nao_desfaz_ingresso_que_nunca_foi_usado(self):
+        services.undo_validation(ticket_code=self.ticket.code, gate_user=self.portaria)
+        with self.assertRaises(services.ReservationError):
+            services.undo_validation(ticket_code=self.ticket.code, gate_user=self.portaria)
+
+    def test_codigo_inexistente(self):
+        import uuid as _uuid
+
+        with self.assertRaises(services.ReservationError):
+            services.undo_validation(ticket_code=_uuid.uuid4(), gate_user=self.portaria)
+
+
+class PortariaPlacarTest(TestCase):
+    """O contador de entradas vem junto da lista de eventos, não numa 2ª chamada."""
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.client = APIClient()
+        _, self.evento = _make_world(capacity=10)
+        self.cliente = User.objects.create_user(
+            email="cp@t.dev", password="x", full_name="C", role=User.Role.CUSTOMER
+        )
+        self.portaria = User.objects.create_user(
+            email="pp@t.dev", password="x", full_name="P", role=User.Role.GATE
+        )
+        self.client.force_authenticate(self.portaria)
+
+    def test_placar_reflete_as_validacoes(self):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=3
+        )
+        _, tickets = services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+
+        antes = self.client.get(reverse("gate-events")).json()[0]
+        self.assertEqual((antes["tickets_total"], antes["tickets_used"]), (3, 0))
+
+        services.validate_ticket(
+            payload=tickets[0].qr_payload,
+            event_id=self.evento.pk,
+            gate_user=self.portaria,
+        )
+        depois = self.client.get(reverse("gate-events")).json()[0]
+        self.assertEqual((depois["tickets_total"], depois["tickets_used"]), (3, 1))
+
+    def test_placar_nao_cresce_em_queries_com_mais_eventos(self):
+        with CaptureQueriesContext(connection) as poucos:
+            self.client.get(reverse("gate-events"))
+
+        for i in range(6):
+            Event.objects.create(
+                organizer=self.evento.organizer,
+                source=Event.Source.TMDB,
+                external_id=f"p-{i}",
+                title=f"Evento {i}",
+                venue="X",
+                starts_at=timezone.now() + timedelta(days=20),
+                status=Event.Status.PUBLISHED,
+                price=Decimal("10.00"),
+                capacity=10,
+            )
+        with CaptureQueriesContext(connection) as muitos:
+            self.client.get(reverse("gate-events"))
+
+        self.assertEqual(
+            len(poucos), len(muitos),
+            "a lista da portaria recarrega a cada validação: N+1 aqui é caro",
+        )

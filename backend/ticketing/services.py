@@ -18,7 +18,7 @@ from django.utils import timezone
 
 from events.models import Event, Seat
 
-from .models import Payment, Reservation, Ticket
+from .models import TAMANHO_CODIGO, Payment, Reservation, Ticket
 
 logger = logging.getLogger(__name__)
 
@@ -345,6 +345,44 @@ class GateResult:
     WRONG_EVENT = "WRONG_EVENT"
 
 
+# Janela para desfazer uma validação feita por engano.
+#
+# Curta de propósito: desfazer serve para corrigir o erro que a portaria acabou
+# de cometer — leu o QR errado, tocou duas vezes. Passado esse tempo, a pessoa
+# já entrou, e "desvalidar" o ingresso dela deixaria de ser correção para virar
+# uma forma de reabrir a entrada.
+JANELA_DESFAZER = timedelta(minutes=5)
+
+
+def undo_validation(*, ticket_code, gate_user):
+    """Devolve um ingresso recém-validado ao estado válido."""
+    with transaction.atomic():
+        try:
+            ticket = (
+                Ticket.objects.select_for_update(of=("self",))
+                .select_related("event")
+                .get(code=ticket_code)
+            )
+        except (Ticket.DoesNotExist, ValueError, ValidationError):
+            raise ReservationError("Ingresso não encontrado.") from None
+
+        if ticket.status != Ticket.Status.USED:
+            raise ReservationError("Este ingresso não está marcado como utilizado.")
+
+        if ticket.used_at and timezone.now() - ticket.used_at > JANELA_DESFAZER:
+            minutos = int(JANELA_DESFAZER.total_seconds() // 60)
+            raise ReservationError(
+                f"Só dá para desfazer nos primeiros {minutos} minutos após a validação."
+            )
+
+        ticket.status = Ticket.Status.VALID
+        ticket.used_at = None
+        ticket.used_by = None
+        ticket.save(update_fields=["status", "used_at", "used_by"])
+
+    return ticket
+
+
 def validate_ticket(*, payload, event_id, gate_user):
     """
     Valida um ingresso na entrada. Devolve (resultado, ticket_ou_None, detalhe).
@@ -354,13 +392,23 @@ def validate_ticket(*, payload, event_id, gate_user):
     """
     from .signing import parse_payload
 
-    # Aceita tanto o conteúdo do QR ("codigo.assinatura") quanto o código
-    # digitado à mão pela portaria, quando a câmera não colabora.
+    # Três formatos aceitos, do mais forte para o mais fraco:
+    #   1. conteúdo do QR ("codigo.assinatura") — assinado, é o caminho normal;
+    #   2. o UUID inteiro, digitado;
+    #   3. o código curto de 8 caracteres, que é o que dá para ditar numa fila.
     code = parse_payload(payload)
+    digitado = (payload or "").strip()
+    curto = None
+
     if code is None:
-        code = payload.strip() if payload else ""
-        if not code:
+        if not digitado:
             return GateResult.INVALID, None, "Código vazio."
+        # O código curto tem tamanho fixo e alfabeto próprio; o UUID tem 36
+        # caracteres com hífens. Não há como confundir os dois.
+        if len(digitado) == TAMANHO_CODIGO:
+            curto = digitado.upper()
+        else:
+            code = digitado
 
     with transaction.atomic():
         try:
@@ -374,11 +422,10 @@ def validate_ticket(*, payload, event_id, gate_user):
             # cannot be applied to the nullable side of an outer join".
             # Travar evento e cliente para validar uma entrada seria errado de
             # qualquer forma — bloquearia a venda do evento inteiro na portaria.
-            ticket = (
-                Ticket.objects.select_for_update(of=("self",))
-                .select_related("event", "customer", "seat")
-                .get(code=code)
+            base = Ticket.objects.select_for_update(of=("self",)).select_related(
+                "event", "customer", "seat"
             )
+            ticket = base.get(short_code=curto) if curto else base.get(code=code)
         # ValidationError cobre o caso de o código digitado nem ser um UUID —
         # o Django recusa antes de ir ao banco.
         except (Ticket.DoesNotExist, ValueError, ValidationError):

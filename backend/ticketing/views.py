@@ -24,6 +24,7 @@ from events.models import Event
 from . import services
 from .models import Reservation, Ticket
 from .serializers import (
+    GateUndoSerializer,
     GateValidateSerializer,
     PaymentSerializer,
     ReservationCreateSerializer,
@@ -242,14 +243,62 @@ class GateValidateView(APIView):
 
 
 class GateEventsView(generics.ListAPIView):
-    """Eventos que a portaria pode selecionar na tela."""
+    """
+    Eventos selecionáveis na portaria, COM o placar de entradas.
+
+    O contador vem junto da lista, e não numa segunda chamada: a portaria
+    escolhe o evento uma vez e fica ali a noite inteira. Uma requisição a menos
+    numa tela usada em rede de celular conta.
+    """
 
     permission_classes = (IsGate,)
+    pagination_class = None
 
     def list(self, request, *args, **kwargs):
-        from events.models import Event
-
-        eventos = Event.objects.filter(status=Event.Status.PUBLISHED).values(
-            "id", "title", "venue", "starts_at"
+        eventos = (
+            Event.objects.filter(status=Event.Status.PUBLISHED)
+            # Anotado no banco: contar em Python custaria duas queries por
+            # evento, e esta lista é recarregada a cada validação.
+            .annotate(
+                tickets_total=Count("tickets", distinct=True),
+                tickets_used=Count(
+                    "tickets",
+                    filter=Q(tickets__status=Ticket.Status.USED),
+                    distinct=True,
+                ),
+            )
+            .values("id", "title", "venue", "starts_at", "tickets_total", "tickets_used")
         )
         return Response(list(eventos))
+
+
+class GateUndoView(APIView):
+    """
+    Desfaz uma validação feita por engano.
+
+    A portaria erra: lê o QR da pessoa de trás, toca duas vezes, valida no
+    evento errado. Sem desfazer, a saída é o cliente ficar de fora e alguém
+    abrir o admin do Django numa fila — o que ninguém faz.
+
+    A janela é curta (5 min) porque desfazer serve para corrigir o erro
+    recém-cometido. Depois disso a pessoa já entrou, e reverter deixaria de ser
+    correção para virar reabertura de entrada.
+    """
+
+    permission_classes = (IsGate,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "gate"
+
+    @extend_schema(request=GateUndoSerializer)
+    def post(self, request):
+        entrada = GateUndoSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+
+        try:
+            ticket = services.undo_validation(
+                ticket_code=entrada.validated_data["code"], gate_user=request.user
+            )
+        except services.ReservationError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        return Response({"detail": "Validação desfeita.", "code": str(ticket.code)})
