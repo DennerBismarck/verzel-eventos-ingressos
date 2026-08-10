@@ -130,9 +130,31 @@ aleatória não permitiria.
 cd backend && python manage.py test
 ```
 
-19 testes, com destaque para **dois testes de concorrência** que sobem 10 threads
-disputando 3 vagas — um com `select_for_update` e outro sem, para demonstrar a
-race condition que o lock elimina. O segundo imprime o resultado na saída.
+**77 testes**, distribuídos assim:
+
+| App | Testes | O que cobre |
+|-----|--------|-------------|
+| `ticketing` | 19 | No-double-sell, assinatura do QR, portaria, estoque |
+| `accounts` | 27 | Login por e-mail, papel no JWT, permissões por papel |
+| `events` | 31 | Vitrine, painel do organizador, catálogo externo |
+
+Destaque para **dois testes de concorrência** que sobem 10 threads disputando 3
+vagas — um com `select_for_update` e outro sem — para demonstrar a race
+condition que o lock elimina. O segundo imprime o resultado na saída:
+
+```
+[sem lock] 10 clientes aprovados para 3 vagas; sold_count gravado: 2
+[com lock] exatamente 3 aprovados, contador exato.
+```
+
+O `2` não é engano: sem o lock houve oversell **e** _lost update_ — as threads
+leram o mesmo contador e sobrescreveram umas às outras, deixando o banco abaixo
+do real.
+
+Os testes de catálogo **não tocam a rede**: `requests.get` é substituído por um
+dublê. Teste que depende de API de terceiro falha quando o terceiro cai, gasta
+cota a cada execução e não roda sem chave — deixa de ser teste e vira
+monitoramento.
 
 Exemplo:
 ```bash

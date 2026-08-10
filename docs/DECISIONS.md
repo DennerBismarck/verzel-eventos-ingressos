@@ -167,6 +167,46 @@ Promise mas valida argumento antes ainda pode lançar sincronamente — e o
 usuário afetado é exatamente aquele com a câmera bloqueada, que é quem mais
 precisava da digitação manual funcionar.
 
+### Dia 4 — a chave de API estava indo para o log
+
+**Sintoma:** ao escrever o teste de erro HTTP do catálogo, o console cuspiu
+`requests.exceptions.HTTPError: 401 para ...api_key=chave-de-teste`.
+
+**Causa:** os dois provedores autenticam pela **query string** (`?api_key=` no
+TMDb, `?apikey=` na Ticketmaster). No `except` eu usava `logger.exception`, que
+despeja o traceback inteiro — e a mensagem do `requests` carrega a URL
+completa. Em produção isso escreveria a chave real nos logs da Render, legível
+por qualquer pessoa com acesso ao dashboard.
+
+**Correção:** `logger.error` registrando só tipo da exceção e status HTTP. Mais
+um teste com `assertLogs` verificando as duas pontas: o segredo não aparece, e
+o diagnóstico continua aparecendo.
+
+**Aprendizado:** eu tinha escrito, no comentário original, que a mensagem que
+sobe é genérica "porque a URL contém a api_key". Eu sabia do risco e mesmo
+assim deixei o traceback ir inteiro para o log — proteger a resposta e esquecer
+o log é meio caminho. Segredo em query string vaza por todo lugar que registra
+URL: log de aplicação, log de proxy, histórico de navegador, referer.
+
+### Dia 4 — o teste que media o artifício, não o sistema
+
+Ao cobrir permissões, escrevi um teste afirmando que usuário desativado é
+barrado. Ele **falhou com 200** — e a primeira leitura foi "achei uma falha de
+segurança".
+
+Não era. O teste usava `force_authenticate`, que **pula a camada de
+autenticação** — exatamente onde o simplejwt recusa token de conta inativa. O
+caminho real nunca esteve aberto, e reescrevi o teste emitindo um token de
+verdade para provar isso.
+
+Ainda assim somei `is_active` explícito à `HasRole`: a permission class não deve
+assumir *quem* autenticou. Trocar o backend ou somar uma sessão de admin
+reabriria a porta. O segundo teste chama a permissão direto, sem autenticador.
+
+**Aprendizado:** quando um teste falha, a primeira pergunta é se ele está
+medindo o que diz medir. Atalho de teste que contorna uma camada também
+contorna as garantias daquela camada.
+
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele
 - [ ] Por que HMAC impede forjar o QR (e por que só UUID não impediria)
