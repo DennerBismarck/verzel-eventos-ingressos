@@ -52,6 +52,9 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     # terceiros
     "rest_framework",
+    # Guarda os refresh tokens revogados. Sem este app, "sair" só apagaria o
+    # token do navegador — quem já tivesse uma cópia continuaria entrando.
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "drf_spectacular",
     # nossos
@@ -139,6 +142,37 @@ REST_FRAMEWORK = {
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 12,
+    # ----------------------------------------------------------------------
+    # Rate limit
+    #
+    # Sem isto, /api/auth/login aceita quantas tentativas o atacante quiser:
+    # a senha do seed é pública no README, mas as reais não são, e uma lista
+    # de senhas comuns roda em minutos.
+    #
+    # Escopos separados porque os riscos são diferentes:
+    #   auth    — força bruta de senha. Apertado.
+    #   gate    — a portaria valida em rajada numa entrada movimentada;
+    #             apertar aqui atrapalharia o uso legítimo.
+    #   catalog — cada chamada vira uma requisição à API de terceiro e gasta
+    #             cota nossa. O cache de 15 min já ajuda; o limite fecha a
+    #             porta de esgotar a cota de propósito.
+    # ----------------------------------------------------------------------
+    "DEFAULT_THROTTLE_CLASSES": (
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "60/min",
+        "user": "300/min",
+        # Configurável por ambiente, com PADRÃO ESTRITO. Limite de taxa é
+        # configuração de ambiente por natureza: produção quer 10/min, e uma
+        # suíte de testes que se martela do mesmo IP precisa de outro valor —
+        # senão o throttle derruba os próprios testes e a reação natural é
+        # afrouxar o limite de produção, que é o pior desfecho possível.
+        "auth": env("THROTTLE_AUTH_RATE", default="10/min"),
+        "gate": "120/min",
+        "catalog": "30/min",
+    },
 }
 
 SIMPLE_JWT = {
@@ -147,6 +181,14 @@ SIMPLE_JWT = {
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "AUTH_HEADER_TYPES": ("Bearer",),
     "SIGNING_KEY": SECRET_KEY,
+    # Cada refresh usado devolve um refresh NOVO e invalida o anterior. Duas
+    # consequências práticas:
+    #   1. um refresh vazado só serve até a vítima usar o dela — e quando o
+    #      atacante tentar reusar o token velho, ele já não vale;
+    #   2. o logout consegue revogar de verdade, em vez de só apagar do
+    #      navegador e torcer.
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
 }
 
 SPECTACULAR_SETTINGS = {
@@ -196,3 +238,31 @@ if not DEBUG:
         CSRF_TRUSTED_ORIGINS.append(f"https://{RENDER_HOST}")
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
+
+    # ----------------------------------------------------------------------
+    # Cabeçalhos de segurança
+    #
+    # Só fora de DEBUG: em desenvolvimento o SSL redirect quebraria o
+    # http://localhost e o HSTS deixaria o navegador preso em https por meses,
+    # inclusive depois de desligar a flag.
+    # ----------------------------------------------------------------------
+    SECURE_SSL_REDIRECT = True
+
+    # HSTS: o navegador passa a recusar http neste domínio sem nem tentar,
+    # fechando a janela do primeiro request em texto claro (onde um ataque de
+    # rede sequestraria o redirect). 1 ano é o valor que os pré-carregadores
+    # exigem. NÃO incluímos subdomínios: não controlamos todos em .onrender.com.
+    SECURE_HSTS_SECONDS = 31_536_000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False
+
+    # Impede o navegador de "adivinhar" o tipo do conteúdo. Sem isso, um
+    # arquivo enviado como texto pode ser interpretado como script.
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+
+    # A API não deve ser embutida em iframe de ninguém — nem o /admin.
+    X_FRAME_OPTIONS = "DENY"
+
+    # Não vaza o caminho completo da nossa URL para sites de terceiros,
+    # incluindo os CDNs de imagem que o front consulta.
+    SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"

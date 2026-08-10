@@ -94,6 +94,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  const logout = useCallback(() => {
+    const refresh = lerSessao()?.refresh;
+
+    // Limpa PRIMEIRO, avisa o servidor depois. A ordem importa: se a rede
+    // estiver ruim, o usuário não pode ficar preso "saindo" — ele pediu para
+    // sair e a tela tem que responder na hora.
+    limparSessao();
+
+    // Revoga em segundo plano. Sem isto, sair apagaria o token do navegador e
+    // torceria: quem já tivesse uma cópia do refresh seguiria emitindo access
+    // novos por 7 dias.
+    if (refresh) {
+      void api("/api/auth/logout", {
+        method: "POST",
+        token: null,
+        body: JSON.stringify({ refresh }),
+      }).catch(() => {
+        // Servidor fora do ar não pode impedir alguém de sair. O token expira
+        // sozinho em 7 dias; o pior caso é a revogação não acontecer agora.
+      });
+    }
+  }, []);
+
   const value = useMemo(
     () => ({
       user: sessao?.user ?? null,
@@ -101,9 +124,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ready: carregada,
       login,
       register,
-      logout: limparSessao,
+      logout,
     }),
-    [sessao, carregada, login, register],
+    [sessao, carregada, login, register, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

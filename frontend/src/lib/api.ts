@@ -6,7 +6,7 @@
  * tela precise saber disso.
  */
 
-import { lerSessao, limparSessao, trocarAccess } from "./session";
+import { lerSessao, limparSessao, trocarTokens } from "./session";
 
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -56,9 +56,12 @@ async function renovarAccess(): Promise<string | null> {
         body: JSON.stringify({ refresh: sessao.refresh }),
       });
       if (!res.ok) return null;
-      const { access } = (await res.json()) as { access: string };
-      trocarAccess(access);
-      return access;
+      // Com rotação ligada, a resposta traz refresh novo TAMBÉM. Ignorá-lo
+      // deixaria a sessão segurando um token que o servidor acabou de
+      // revogar — a renovação seguinte falharia e o usuário cairia no login.
+      const dados = (await res.json()) as { access: string; refresh?: string };
+      trocarTokens(dados.access, dados.refresh);
+      return dados.access;
     } catch {
       // Rede caiu no meio da renovação: não é motivo para deslogar.
       return null;

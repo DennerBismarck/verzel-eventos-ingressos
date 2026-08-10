@@ -64,3 +64,9 @@ class RoleTokenObtainPairSerializer(TokenObtainPairSerializer):
         data = super().validate(attrs)
         data["user"] = UserSerializer(self.user).data
         return data
+
+
+class LogoutSerializer(serializers.Serializer):
+    """O refresh a ser revogado. O access não entra: ele não é consultado."""
+
+    refresh = serializers.CharField()

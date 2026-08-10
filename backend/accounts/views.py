@@ -1,9 +1,13 @@
-from rest_framework import generics, permissions
+from rest_framework import generics, permissions, status
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
-from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .serializers import (
+    LogoutSerializer,
     RegisterSerializer,
     RoleTokenObtainPairSerializer,
     UserSerializer,
@@ -17,6 +21,10 @@ class RegisterView(generics.CreateAPIView):
     # Precisa ser aberto: quem se cadastra ainda não tem token.
     # (Lembrar: o default do projeto é IsAuthenticated.)
     permission_classes = [permissions.AllowAny]
+    # Escopo "auth": 10/min. Cadastro aberto sem limite é convite para encher
+    # a base de contas automáticas.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
 
 
 class LoginView(TokenObtainPairView):
@@ -24,6 +32,48 @@ class LoginView(TokenObtainPairView):
 
     serializer_class = RoleTokenObtainPairSerializer
     permission_classes = [permissions.AllowAny]
+    # O limite mais importante do projeto. Sem ele, uma lista de senhas comuns
+    # roda contra qualquer e-mail conhecido em minutos.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
+
+
+class RefreshView(TokenRefreshView):
+    """POST /api/auth/refresh — troca o refresh por um access novo."""
+
+    # Mesmo escopo do login: quem tenta adivinhar refresh token está fazendo
+    # força bruta igual, só que noutra porta.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "auth"
+
+
+class LogoutView(APIView):
+    """
+    POST /api/auth/logout — revoga o refresh token.
+
+    Sem isto, "sair" apagava o token do navegador e torcia. Quem já tivesse
+    uma cópia do refresh (log, backup, extensão maliciosa) seguiria emitindo
+    access novos por 7 dias, mesmo depois do usuário achar que tinha saído.
+
+    O access em si continua válido até expirar — é a natureza de um token
+    autocontido, que não é consultado no banco a cada uso. Por isso ele dura
+    60 minutos e não uma semana: é a janela que se aceita nesse desenho.
+    """
+
+    serializer_class = LogoutSerializer
+
+    def post(self, request):
+        entrada = LogoutSerializer(data=request.data)
+        entrada.is_valid(raise_exception=True)
+        try:
+            RefreshToken(entrada.validated_data["refresh"]).blacklist()
+        except TokenError:
+            # Token já expirado, já revogado ou malformado. O resultado que o
+            # usuário queria — não valer mais — já está garantido, então isso
+            # não é erro. Responder 400 aqui só deixaria a tela presa numa
+            # falha que não importa.
+            pass
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class MeView(generics.RetrieveAPIView):
@@ -44,6 +94,9 @@ class HealthView(APIView):
     """
 
     permission_classes = [permissions.AllowAny]
+    # Sem limite: é o endpoint que o monitoramento da Render bate de minuto em
+    # minuto para saber se o serviço está vivo. Limitar derrubaria o healthcheck.
+    throttle_classes = []
 
     def get(self, request):
         return Response({"status": "ok", "service": "eventos-ingressos-api"})

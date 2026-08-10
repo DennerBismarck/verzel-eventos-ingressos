@@ -14,6 +14,7 @@ from rest_framework import generics, status
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework.viewsets import ReadOnlyModelViewSet
 
@@ -198,6 +199,11 @@ class GateValidateView(APIView):
     """Portaria: 4 respostas possíveis — válido, inválido, já utilizado, evento errado."""
 
     permission_classes = (IsGate,)
+    # Escopo próprio e FOLGADO: numa entrada movimentada a portaria valida em
+    # rajada, e o limite padrão de usuário atrapalharia o uso legítimo — o
+    # oposto do que se quer numa fila de gente esperando para entrar.
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "gate"
 
     @extend_schema(request=GateValidateSerializer)
     def post(self, request):

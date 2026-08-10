@@ -7,6 +7,7 @@ teste amarra uma dessas decisões para que ninguém a desfaça sem perceber.
 """
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -58,6 +59,10 @@ class UserModelTest(APITestCase):
 
 class RegisterTest(APITestCase):
     def setUp(self):
+        # O contador do throttle vive no cache e VAZA de um teste para o
+        # outro: sem limpar, o quinto teste desta classe leva 429 e falha por
+        # um motivo que nada tem a ver com o que ele testa.
+        cache.clear()
         self.url = reverse("register")
 
     def test_cria_conta_e_devolve_201(self):
@@ -123,6 +128,7 @@ class RegisterTest(APITestCase):
 
 class LoginTest(APITestCase):
     def setUp(self):
+        cache.clear()
         self.user = User.objects.create_user(
             email="a@b.dev", password=SENHA, full_name="Ana", role=User.Role.GATE
         )
@@ -281,3 +287,55 @@ class PermissoesPorPapelTest(APITestCase):
 class HealthTest(APITestCase):
     def test_health_e_publico(self):
         self.assertEqual(self.client.get(reverse("health")).status_code, status.HTTP_200_OK)
+
+
+class ThrottleTest(APITestCase):
+    """
+    Prova que o limite existe de verdade.
+
+    Sem ele, /api/auth/login aceita quantas tentativas o atacante quiser, e uma
+    lista de senhas comuns roda contra um e-mail conhecido em minutos.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.user = User.objects.create_user(
+            email="alvo@b.dev", password=SENHA, full_name="Alvo"
+        )
+
+    def test_forca_bruta_no_login_e_barrada(self):
+        """
+        Bate no limite REAL configurado (auth: 10/min), em vez de sobrescrever
+        a taxa no teste. Assim, se alguém afrouxar a configuração de produção,
+        este teste cai junto — que é o ponto.
+        """
+        url = reverse("login")
+        corpo = {"email": "alvo@b.dev", "password": "senha-errada"}
+
+        codigos = [self.client.post(url, corpo, format="json").status_code for _ in range(14)]
+
+        # As primeiras batem em 401 (senha errada); passando do limite, 429.
+        self.assertEqual(codigos[0], status.HTTP_401_UNAUTHORIZED)
+        self.assertIn(status.HTTP_429_TOO_MANY_REQUESTS, codigos)
+        # E o corte tem que vir cedo: um limite de 100 seria inútil contra
+        # uma lista de senhas comuns.
+        self.assertLessEqual(codigos.index(status.HTTP_429_TOO_MANY_REQUESTS), 12)
+
+    def test_limite_nao_vaza_entre_enderecos(self):
+        """
+        O throttle anônimo do DRF é por IP. Um atacante não pode consumir a
+        cota dos outros usuários — nem o contrário.
+        """
+        url = reverse("login")
+        corpo = {"email": "alvo@b.dev", "password": "errada"}
+        for _ in range(14):
+            self.client.post(url, corpo, format="json")
+
+        # Mesmo cliente, outro IP: cota própria.
+        r = self.client.post(url, corpo, format="json", REMOTE_ADDR="203.0.113.7")
+        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_health_nao_e_limitado(self):
+        """É o endpoint que o monitoramento da Render bate de minuto em minuto."""
+        codigos = {self.client.get(reverse("health")).status_code for _ in range(30)}
+        self.assertEqual(codigos, {status.HTTP_200_OK})

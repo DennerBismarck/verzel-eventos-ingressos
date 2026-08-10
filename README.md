@@ -174,8 +174,13 @@ monitoramento.
 #### Ponta a ponta — 32 testes
 
 ```bash
-cd backend && python manage.py seed && python manage.py runserver   # em um terminal
-cd frontend && npm run test:e2e                                     # em outro
+# em um terminal — THROTTLE_AUTH_RATE afrouxado porque a suíte loga muitas
+# vezes do MESMO IP e bateria no limite de força bruta (10/min em produção)
+cd backend && python manage.py seed
+THROTTLE_AUTH_RATE=1000/min python manage.py runserver
+
+# em outro
+cd frontend && npm run test:e2e
 ```
 
 Playwright contra a aplicação real: Next servindo o front, Django falando com o

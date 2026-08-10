@@ -15,6 +15,7 @@ from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from accounts.permissions import IsOrganizer
@@ -142,6 +143,11 @@ class CatalogSearchView(APIView):
     """
 
     permission_classes = (IsOrganizer,)
+    # Cada chamada aqui vira uma requisição à API de terceiro e gasta cota
+    # NOSSA. O cache de 15 min já ajuda; o limite fecha a porta de alguém
+    # esgotar a cota de propósito.
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "catalog"
 
     @extend_schema(
         parameters=[

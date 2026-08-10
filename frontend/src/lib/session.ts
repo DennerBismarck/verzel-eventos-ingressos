@@ -112,10 +112,17 @@ export function carregarSessao() {
   avisar();
 }
 
-/** Troca só o access, preservando refresh e usuário. */
-export function trocarAccess(access: string) {
+/**
+ * Grava os tokens devolvidos por uma renovação.
+ *
+ * O `refresh` é OPCIONAL na assinatura mas obrigatório na prática desde que
+ * ROTATE_REFRESH_TOKENS foi ligado: o servidor devolve um refresh novo e manda
+ * o anterior para a blacklist. Guardar só o access deixaria a sessão com um
+ * refresh já revogado — funcionaria uma vez e morreria na seguinte.
+ */
+export function trocarTokens(access: string, refresh?: string) {
   if (!sessao) return;
-  sessao = { ...sessao, access };
+  sessao = { ...sessao, access, refresh: refresh ?? sessao.refresh };
   try {
     localStorage.setItem(CHAVE, JSON.stringify(sessao));
   } catch {
