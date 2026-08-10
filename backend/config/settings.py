@@ -200,6 +200,35 @@ SPECTACULAR_SETTINGS = {
 
 
 # --------------------------------------------------------------------------
+# Cache
+# --------------------------------------------------------------------------
+# COMPARTILHADO entre processos, e este é o ponto.
+#
+# O padrão do Django é LocMemCache: memória por PROCESSO. O gunicorn roda
+# vários workers, cada um com o próprio dicionário — e duas coisas quebram em
+# silêncio:
+#
+#   1. o rate limit do DRF conta no cache. Com contadores separados, o limite
+#      efetivo vira "10/min VEZES o número de workers", e a requisição seguinte
+#      cai noutro worker que ainda não viu nada. Medido em produção: 13
+#      tentativas de login seguidas, nenhum 429;
+#
+#   2. o cache do catálogo externo perde eficácia na mesma proporção — cada
+#      worker faz a própria chamada e gasta cota nossa de novo.
+#
+# DatabaseCache e não Redis porque não há Redis no plano free, e acrescentar um
+# serviço para isto seria desproporcional. O custo é uma escrita por
+# requisição contabilizada, aceitável neste volume. Se o tráfego crescesse a
+# ponto de isso pesar, a troca para Redis é uma linha aqui.
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "cache_compartilhado",
+    }
+}
+
+
+# --------------------------------------------------------------------------
 # CORS
 # --------------------------------------------------------------------------
 # O front (Vercel, porta 3000 em dev) roda em outra origem que a API.

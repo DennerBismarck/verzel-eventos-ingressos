@@ -60,6 +60,11 @@ class LogoutView(APIView):
     60 minutos e não uma semana: é a janela que se aceita nesse desenho.
     """
 
+    # AllowAny de propósito: a credencial desta operação é o PRÓPRIO refresh
+    # token enviado no corpo. Exigir um access válido impediria de revogar
+    # justamente quem mais precisa — alguém cujo access já expirou, ou que
+    # desconfia que a sessão vazou.
+    permission_classes = [permissions.AllowAny]
     serializer_class = LogoutSerializer
 
     def post(self, request):

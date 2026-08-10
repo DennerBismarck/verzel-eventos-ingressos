@@ -13,6 +13,10 @@ python manage.py collectstatic --no-input
 # tentariam migrar em paralelo.
 python manage.py migrate
 
+# Tabela do cache compartilhado entre os workers do gunicorn. Sem ela, o rate
+# limit conta em memória por processo e nunca fecha. Idempotente.
+python manage.py createcachetable
+
 # Dados de teste exigidos pelo enunciado. É idempotente, então rodar a cada
 # deploy não duplica nada — e garante que o avaliador sempre acha o seed no ar.
 python manage.py seed
