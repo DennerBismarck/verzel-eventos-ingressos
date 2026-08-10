@@ -99,6 +99,35 @@ test.describe("organizador", () => {
     await expect(page.getByText("R$ 45,00").first()).toBeVisible();
   });
 
+  test("prévia do mapa acompanha filas e lugares digitados", async ({ page }) => {
+    await entrar(page, "organizador");
+    await page.goto("/organizador/novo");
+    await page.locator("#conteudo").getByRole("button", { name: "Buscar" }).click();
+
+    const primeiro = page.locator("li button").first();
+    const semChave = page.getByText(/sem chave de API/);
+    await expect(primeiro.or(semChave)).toBeVisible();
+    test.skip(await semChave.isVisible(), "catálogo sem chave neste ambiente");
+
+    await primeiro.click();
+    await page.getByRole("radio", { name: /Lugar marcado/ }).check();
+
+    // O padrão é 5 filas × 10 lugares.
+    await expect(page.getByText("50 lugares").first()).toBeVisible();
+
+    await page.getByLabel("Filas", { exact: true }).fill("8");
+    await page.getByLabel("Por fila", { exact: true }).fill("12");
+    await expect(page.getByText("96 lugares").first()).toBeVisible();
+
+    // Seção nova nasce SEM nome — e o formulário diz por que não dá para
+    // seguir, em vez de deixar um "Seção 2" provisório virar definitivo.
+    await page.getByRole("button", { name: "Adicionar seção" }).click();
+    await expect(page.getByPlaceholder("Ex.: Balcão, Camarote").nth(1)).toHaveValue("");
+    await page.getByRole("button", { name: /Criar e publicar/ }).click();
+    await expect(page.getByText("Dê um nome à seção.")).toBeVisible();
+    await expect(page).toHaveURL(/\/organizador\/novo/);
+  });
+
   test("evento com data no passado é recusado no campo certo", async ({ page }) => {
     await entrar(page, "organizador");
     await page.goto("/organizador/novo");
@@ -114,9 +143,13 @@ test.describe("organizador", () => {
     await page.getByLabel("Data e hora").fill("2020-01-01T20:00");
     await page.getByLabel(/Preço/).fill("10");
     await page.getByLabel(/Capacidade/).fill("10");
-    await page.getByRole("button", { name: /Criar e publicar/ }).click();
 
+    // A recusa aparece ANTES do envio, no campo que a causou — o servidor
+    // recusaria de qualquer forma, e a mensagem é a mesma dos dois lados.
     await expect(page.getByText("O evento precisa começar no futuro.")).toBeVisible();
+
+    await page.getByRole("button", { name: /Criar e publicar/ }).click();
+    await expect(page).toHaveURL(/\/organizador\/novo/);
   });
 
   test("painel de vendas mostra receita e comprador", async ({ page }) => {

@@ -210,7 +210,7 @@ dublê. Teste que depende de API de terceiro falha quando o terceiro cai, gasta
 cota a cada execução e não roda sem chave — deixa de ser teste e vira
 monitoramento.
 
-#### Ponta a ponta — 36 testes
+#### Ponta a ponta — 37 testes
 
 ```bash
 # em um terminal

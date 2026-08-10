@@ -234,8 +234,19 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
 
   const totalAssentos = secoes.reduce((s, x) => s + x.rows * x.seats_per_row, 0);
 
+  // Validado a cada tecla, não só no envio. O backend recusa data passada de
+  // qualquer forma; avisar aqui evita mandar um request que já se sabe perdido
+  // — e o aviso aparece ao lado do campo que está errado, na hora.
+  const dataNoPassado = startsAt !== "" && new Date(startsAt) <= new Date();
+  const errosDoMapa = kind === "SEATED" ? validarMapa(secoes) : {};
+
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
+
+    // Os dois erros já estão desenhados na tela (são derivados, não estado):
+    // aqui só se impede o envio de um formulário que o servidor recusaria.
+    if (dataNoPassado || Object.keys(errosDoMapa).length > 0) return;
+
     setOcupado(true);
     setErros({});
     setGeral(null);
@@ -350,6 +361,10 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
           hint={item.venue ? "Veio do catálogo — edite se a sua sessão for em outro lugar." : undefined}
         />
 
+        {/* Sem dica permanente: "Precisa ser no futuro" em cinza embaixo de um
+            campo correto é ruído que o olho aprende a ignorar — e aí some
+            junto com o aviso de verdade. A mensagem só aparece quando a data
+            escolhida está errada, em vermelho, no campo que a causou. */}
         <Field
           label="Data e hora"
           name="starts_at"
@@ -357,8 +372,10 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
           required
           value={startsAt}
           onChange={(e) => setStartsAt(e.target.value)}
-          error={erros.starts_at}
-          hint="Precisa ser no futuro."
+          error={
+            erros.starts_at ??
+            (dataNoPassado ? "O evento precisa começar no futuro." : undefined)
+          }
         />
 
         <fieldset>
@@ -430,6 +447,7 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
             secoes={secoes}
             onMudar={setSecoes}
             total={totalAssentos}
+            erros={errosDoMapa}
           />
         )}
 
@@ -484,14 +502,44 @@ function rotulosDeFila(quantidade: number): string[] {
   return saida;
 }
 
+/**
+ * Erros do mapa, por índice de seção.
+ *
+ * Derivado do estado a cada render, e não guardado: um erro guardado envelhece
+ * — o organizador conserta o campo e a mensagem antiga continua na tela até
+ * alguém lembrar de limpá-la.
+ */
+function validarMapa(secoes: SecaoForm[]): Record<number, string> {
+  const erros: Record<number, string> = {};
+  const vistos = new Set<string>();
+
+  secoes.forEach((s, i) => {
+    const nome = s.name.trim();
+    if (!nome) {
+      erros[i] = "Dê um nome à seção.";
+    } else if (vistos.has(nome.toLowerCase())) {
+      // O backend numera a poltrona por (seção, fila, número) e tem constraint
+      // de unicidade nessa tripla: duas seções "Balcão" colidiriam na segunda.
+      erros[i] = "Já existe uma seção com esse nome.";
+    } else if (s.price === "" || Number.isNaN(Number(s.price)) || Number(s.price) < 0) {
+      erros[i] = "Informe um preço válido (0 para gratuito).";
+    }
+    vistos.add(nome.toLowerCase());
+  });
+
+  return erros;
+}
+
 function MontadorDeMapa({
   secoes,
   onMudar,
   total,
+  erros,
 }: {
   secoes: SecaoForm[];
   onMudar: (s: SecaoForm[]) => void;
   total: number;
+  erros: Record<number, string>;
 }) {
   function atualizar(i: number, campo: keyof SecaoForm, valor: string | number) {
     onMudar(secoes.map((s, idx) => (idx === i ? { ...s, [campo]: valor } : s)));
@@ -515,7 +563,15 @@ function MontadorDeMapa({
                 <input
                   value={s.name}
                   onChange={(e) => atualizar(i, "name", e.target.value)}
-                  className="mt-1 h-9 w-full rounded border border-line-strong px-2 text-sm text-ink"
+                  // Placeholder em vez de "Seção 2" preenchido: um nome
+                  // provisório que já parece resposta atravessa o formulário
+                  // inteiro e vai parar no mapa que o cliente vê na compra.
+                  placeholder="Ex.: Balcão, Camarote"
+                  aria-invalid={erros[i] ? true : undefined}
+                  className={`mt-1 h-9 w-full rounded border px-2 text-sm text-ink
+                    placeholder:text-muted ${
+                      erros[i] ? "border-danger" : "border-line-strong"
+                    }`}
                 />
               </label>
               <label className="text-xs text-muted">
@@ -555,6 +611,10 @@ function MontadorDeMapa({
               </label>
             </div>
 
+            {erros[i] && (
+              <p className="mt-2 text-xs font-medium text-danger">{erros[i]}</p>
+            )}
+
             <div className="mt-2 flex items-center justify-between">
               <p className="text-xs text-muted">
                 Filas {rotulosDeFila(s.rows)[0]} a {rotulosDeFila(s.rows).at(-1)} ·{" "}
@@ -580,18 +640,93 @@ function MontadorDeMapa({
         size="sm"
         className="mt-3"
         onClick={() =>
-          onMudar([
-            ...secoes,
-            { name: `Seção ${secoes.length + 1}`, rows: 3, seats_per_row: 8, price: "50.00" },
-          ])
+          onMudar([...secoes, { name: "", rows: 3, seats_per_row: 8, price: "50.00" }])
         }
       >
         Adicionar seção
       </Button>
 
+      <PreviaDoMapa secoes={secoes} />
+
       <p className="mt-3 text-xs text-muted">
         O mapa só pode ser refeito enquanto nenhum lugar tiver sido vendido.
       </p>
+    </div>
+  );
+}
+
+// Teto do desenho. Um teatro de 50 filas × 100 lugares são 5.000 elementos no
+// DOM redesenhados a cada tecla — e ninguém confere poltrona por poltrona numa
+// prévia. O que se confere é a FORMA: quantas filas, que largura, onde é o
+// palco. Passando do teto, mostra-se o recorte e diz-se quanto ficou de fora.
+const MAX_FILAS_DESENHADAS = 10;
+const MAX_LUGARES_DESENHADOS = 24;
+
+/**
+ * Prévia do mapa, redesenhada a cada tecla.
+ *
+ * Existe porque "5 filas × 10 lugares" é um número, não uma sala. O organizador
+ * só descobria o formato depois de criar o evento, abrir a página pública e
+ * ver que o balcão tinha ficado mais largo que a plateia — e a essa altura
+ * refazer o mapa já podia estar bloqueado por uma venda.
+ */
+function PreviaDoMapa({ secoes }: { secoes: SecaoForm[] }) {
+  const comLugares = secoes.filter((s) => s.rows > 0 && s.seats_per_row > 0);
+  if (comLugares.length === 0) return null;
+
+  return (
+    <div className="mt-4 rounded border border-line bg-canvas p-3">
+      <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-muted">
+        Prévia
+      </p>
+
+      {/* Mesma referência espacial do mapa que o cliente vê na compra: sem
+          ela, não dá para saber qual ponta é a frente da sala. */}
+      <div className="mb-3 rounded border border-line bg-white py-1 text-center
+        text-[10px] font-semibold uppercase tracking-[0.2em] text-muted">
+        Palco
+      </div>
+
+      <div className="space-y-3 overflow-x-auto">
+        {comLugares.map((s, i) => {
+          const filas = rotulosDeFila(Math.min(s.rows, MAX_FILAS_DESENHADAS));
+          const porFila = Math.min(s.seats_per_row, MAX_LUGARES_DESENHADOS);
+          const filasOcultas = s.rows - filas.length;
+          const lugaresOcultos = s.seats_per_row - porFila;
+
+          return (
+            <div key={i}>
+              <p className="mb-1 text-xs font-medium text-body">
+                {s.name.trim() || "Seção sem nome"}
+                <span className="ml-2 font-normal text-muted">
+                  {s.rows * s.seats_per_row} lugares
+                </span>
+              </p>
+
+              {/* aria-hidden: a informação já está escrita acima em texto. Um
+                  leitor de tela anunciando 240 quadradinhos seria ruído puro. */}
+              <div aria-hidden="true" className="space-y-1">
+                {filas.map((letra) => (
+                  <div key={letra} className="flex items-center gap-1">
+                    <span className="w-4 shrink-0 text-[10px] text-muted">{letra}</span>
+                    {Array.from({ length: porFila }).map((_, n) => (
+                      <span key={n} className="size-2.5 shrink-0 rounded-[2px] bg-brand/30" />
+                    ))}
+                    {lugaresOcultos > 0 && (
+                      <span className="ml-1 text-[10px] text-muted">+{lugaresOcultos}</span>
+                    )}
+                  </div>
+                ))}
+                {filasOcultas > 0 && (
+                  <p className="pl-5 text-[10px] text-muted">
+                    + {filasOcultas} {filasOcultas === 1 ? "fila" : "filas"}
+                  </p>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
