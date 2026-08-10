@@ -233,6 +233,10 @@ class GateValidateView(APIView):
                 "customer_name": ticket.customer.full_name,
                 "event_title": ticket.event.title,
                 "seat_label": str(ticket.seat) if ticket.seat else None,
+                # O código volta para que a tela consiga desfazer a validação
+                # que ACABOU de fazer. Sai só para a portaria autenticada, que
+                # já tem o ingresso em mãos.
+                "code": str(ticket.code),
             }
 
         # Sempre HTTP 200: a portaria PERGUNTOU e foi respondida com sucesso.

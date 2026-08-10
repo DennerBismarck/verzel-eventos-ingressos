@@ -271,9 +271,12 @@ function ModalQR({ ticket, onFechar }: { ticket: Ticket; onFechar: () => void })
           <QRCodeSVG value={ticket.qr_payload} size={200} level="M" />
         </div>
 
-        <p className="font-mono text-[11px] text-muted">{ticket.code}</p>
-        <p className="mt-1 text-xs text-muted">
-          Código para digitação manual, se a câmera falhar.
+        {/* O código curto em destaque, e o UUID fora da tela.
+            Ditar 36 caracteres com hífen numa fila é impraticável — a portaria
+            digita estes 8. */}
+        <p className="text-xs text-muted">Se a câmera falhar, informe o código</p>
+        <p className="mt-1 font-mono text-2xl font-bold tracking-[0.25em] text-ink">
+          {ticket.short_code}
         </p>
 
         <div className="mt-5 border-t border-line pt-4 text-left">

@@ -85,6 +85,8 @@ export type Ticket = {
   status: TicketStatus;
   used_at: string | null;
   qr_payload: string;
+  /** Código de 8 caracteres para ditar na portaria quando a câmera falha. */
+  short_code: string;
   share_token: string;
   event: number;
   event_title: string;
@@ -175,6 +177,7 @@ export type GateResponse = {
     customer_name: string;
     event_title: string;
     seat_label: string | null;
+    code?: string;
   };
 };
 
@@ -183,6 +186,21 @@ export type GateEvent = {
   title: string;
   venue: string;
   starts_at: string;
+  /** Placar de entradas, anotado no banco e recarregado a cada validação. */
+  tickets_total: number;
+  tickets_used: number;
+};
+
+/** Uma leitura recente, para a lista de desfazer. */
+export type Scan = {
+  id: string;
+  resultado: GateResult;
+  detalhe: string;
+  nome?: string;
+  lugar?: string | null;
+  /** Só existe quando deu VALID — é o que o desfazer precisa. */
+  code?: string;
+  quando: number;
 };
 
 /** A paginação padrão do DRF (PageNumberPagination). */

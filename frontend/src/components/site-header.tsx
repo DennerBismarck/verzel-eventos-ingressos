@@ -42,6 +42,11 @@ export function SiteHeader() {
     router.push(termo ? `/?q=${encodeURIComponent(termo)}` : "/");
   }
 
+  // A portaria não procura evento: ela já escolheu a sessão e fica ali. Uma
+  // busca de vitrine no topo dessa tela é ruído — e ocupa o espaço que numa
+  // mão só, em pé, é o mais caro que existe.
+  const naPortaria = pathname.startsWith("/portaria");
+
   return (
     <header className="sticky top-0 z-40 border-b border-brand-dark bg-brand text-white">
       <div className="mx-auto flex h-14 max-w-6xl items-center gap-4 px-4">
@@ -53,6 +58,13 @@ export function SiteHeader() {
           <span className="text-accent">.</span>
         </Link>
 
+        {naPortaria && (
+          <span className="text-sm font-semibold text-white/80">Portaria</span>
+        )}
+
+        {/* Não renderiza na portaria, em vez de esconder por CSS: o campo
+            some do DOM e da árvore de acessibilidade, sem input órfão. */}
+        {!naPortaria && (
         <form
           onSubmit={buscar}
           role="search"
@@ -78,6 +90,7 @@ export function SiteHeader() {
             Buscar
           </button>
         </form>
+        )}
 
         <nav className="ml-auto flex items-center gap-1 text-sm">
           {!ready ? (
@@ -90,7 +103,11 @@ export function SiteHeader() {
               {user.role === "CUSTOMER" && (
                 <HeaderLink href="/minha-conta">Meus ingressos</HeaderLink>
               )}
-              {user.role === "GATE" && <HeaderLink href="/portaria">Portaria</HeaderLink>}
+              {/* Sem link para a tela em que já se está: na portaria o rótulo
+                  ao lado da marca já diz onde estamos. */}
+              {user.role === "GATE" && !naPortaria && (
+                <HeaderLink href="/portaria">Portaria</HeaderLink>
+              )}
 
               <div className="relative">
                 <button
@@ -165,7 +182,9 @@ export function SiteHeader() {
         </nav>
       </div>
 
-      {/* A busca some no topo em telas pequenas e reaparece numa linha própria. */}
+      {/* A busca some no topo em telas pequenas e reaparece numa linha própria.
+          Na portaria ela não existe. */}
+      {!naPortaria && (
       <div className="border-t border-brand-dark px-4 py-2 sm:hidden">
         <form onSubmit={buscar} role="search" className="flex">
           <label htmlFor="busca-mobile" className="sr-only">
@@ -188,6 +207,7 @@ export function SiteHeader() {
           </button>
         </form>
       </div>
+      )}
     </header>
   );
 }
