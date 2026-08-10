@@ -149,12 +149,7 @@ curl -X POST http://127.0.0.1:8000/api/auth/login \
 
 ## Deploy
 
-- **Front (Vercel):** importe o repo e defina **Root Directory = `frontend`**.
-  Variável de ambiente: `NEXT_PUBLIC_API_URL` = URL da API na Render.
-- **Back (Render):** New → Blueprint, apontando para este repo. O
-  [`render.yaml`](render.yaml) descreve o web service + o Postgres.
-  A Render vai pedir `CORS_ALLOWED_ORIGINS` (URL da Vercel) e `TMDB_API_KEY`;
-  `SECRET_KEY` e `TICKET_SIGNING_KEY` ela mesma gera.
+**A aplicação está publicada e o fluxo inteiro funciona no ar:**
 
 | Ambiente | URL |
 |----------|-----|
@@ -162,8 +157,32 @@ curl -X POST http://127.0.0.1:8000/api/auth/login \
 | Back (Render) | https://ingressos-api.onrender.com |
 | Docs da API | https://ingressos-api.onrender.com/api/docs |
 
+Para percorrer sem montar nada: entre em `/entrar` e clique numa das contas de
+demonstração (a senha já vem preenchida), compre um ingresso, abra o QR em
+`/minha-conta`, e valide o código em `/portaria` com a conta de portaria.
+
 > A Render no plano free hiberna após ~15 min sem tráfego. A primeira
-> requisição depois disso pode levar ~50s. Não é bug — é o cold start.
+> requisição depois disso leva ~50s — medido, não estimado. Não é bug, é o
+> cold start. Se a vitrine demorar a preencher, é isso.
+
+### Reproduzir o deploy
+
+- **Front (Vercel):** importe o repo e defina **Root Directory = `frontend`**.
+  Variável de ambiente: `NEXT_PUBLIC_API_URL` = URL da API na Render.
+- **Back (Render):** New → Blueprint, apontando para este repo. O
+  [`render.yaml`](render.yaml) descreve o web service + o Postgres.
+  A Render pede `CORS_ALLOWED_ORIGINS` (URL da Vercel), `TMDB_API_KEY` e
+  `TICKETMASTER_API_KEY`; `SECRET_KEY` e `TICKET_SIGNING_KEY` ela mesma gera.
+
+> **Atenção em serviço já existente:** variável marcada como `sync: false` no
+> `render.yaml` só é perguntada quando o blueprint é criado. Ao adicionar uma
+> nova depois, é preciso preenchê-la à mão em Environment — senão ela sobe
+> vazia. Foi o que aconteceu com `TICKETMASTER_API_KEY`.
+
+O build da Render roda [`backend/build.sh`](backend/build.sh): instala
+dependências, junta os estáticos, aplica as migrations e roda o seed. Migrations
+no **build** e não no start, porque no start várias instâncias tentariam migrar
+em paralelo.
 
 ---
 
@@ -226,6 +245,11 @@ Artefatos de contexto usados com a IA estão versionados em [`docs/`](docs/).
 ## O que faltou / não funciona como esperado
 _(seja honesto aqui — o enunciado diz que a ausência de explicação penaliza)_
 
+- **O catálogo externo em produção depende de chave configurada na Render.**
+  Sem `TMDB_API_KEY` / `TICKETMASTER_API_KEY`, `/api/catalog/search` responde
+  **503 com a explicação** em vez de quebrar — o resto da aplicação (vitrine,
+  compra, QR, portaria) funciona normalmente, porque os eventos publicados
+  guardam uma cópia dos dados e não consultam a API externa a cada request.
 - **Cobertura da Ticketmaster no Brasil é fraca.** A Discovery API é
   majoritariamente EUA/Europa, então buscar por cidade brasileira costuma voltar
   vazio. Não é bug de integração — é o catálogo deles. Para demonstrar, busque
