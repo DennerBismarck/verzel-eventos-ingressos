@@ -321,19 +321,38 @@ class ThrottleTest(APITestCase):
         # uma lista de senhas comuns.
         self.assertLessEqual(codigos.index(status.HTTP_429_TOO_MANY_REQUESTS), 12)
 
-    def test_limite_nao_vaza_entre_enderecos(self):
+    def test_limite_segue_a_conta_mesmo_trocando_de_ip(self):
         """
-        O throttle anônimo do DRF é por IP. Um atacante não pode consumir a
-        cota dos outros usuários — nem o contrário.
+        A propriedade que importa: trocar de endereço NÃO devolve cota.
+
+        Um limite por IP é contornado por qualquer atacante com uma lista de
+        proxies. Chaveando pela conta alvo, a proteção acompanha o que está
+        sendo atacado. (E foi o que consertou o limite em produção, onde o IP
+        lido de X-Forwarded-For atrás do proxy não era estável.)
         """
         url = reverse("login")
         corpo = {"email": "alvo@b.dev", "password": "errada"}
         for _ in range(14):
             self.client.post(url, corpo, format="json")
 
-        # Mesmo cliente, outro IP: cota própria.
         r = self.client.post(url, corpo, format="json", REMOTE_ADDR="203.0.113.7")
-        self.assertEqual(r.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(r.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_ataque_a_uma_conta_nao_bloqueia_as_outras(self):
+        """
+        O outro lado da moeda: o limite não pode virar arma. Se fosse global,
+        bastaria martelar um e-mail para trancar a porta de todo mundo.
+        """
+        User.objects.create_user(email="vizinho@b.dev", password=SENHA, full_name="Vizinho")
+        url = reverse("login")
+
+        for _ in range(14):
+            self.client.post(url, {"email": "alvo@b.dev", "password": "errada"}, format="json")
+
+        r = self.client.post(
+            url, {"email": "vizinho@b.dev", "password": SENHA}, format="json"
+        )
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
 
     def test_health_nao_e_limitado(self):
         """É o endpoint que o monitoramento da Render bate de minuto em minuto."""

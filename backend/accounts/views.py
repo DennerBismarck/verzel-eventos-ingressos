@@ -6,6 +6,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from .throttling import ForcaBrutaThrottle
 from .serializers import (
     LogoutSerializer,
     RegisterSerializer,
@@ -32,10 +33,10 @@ class LoginView(TokenObtainPairView):
 
     serializer_class = RoleTokenObtainPairSerializer
     permission_classes = [permissions.AllowAny]
-    # O limite mais importante do projeto. Sem ele, uma lista de senhas comuns
-    # roda contra qualquer e-mail conhecido em minutos.
-    throttle_classes = [ScopedRateThrottle]
-    throttle_scope = "auth"
+    # O limite mais importante do projeto. Chaveado pela CONTA ALVO, não pelo
+    # IP: um atacante rotaciona endereço com facilidade, mas o e-mail que ele
+    # quer invadir continua o mesmo. Ver accounts/throttling.py.
+    throttle_classes = [ForcaBrutaThrottle]
 
 
 class RefreshView(TokenRefreshView):
