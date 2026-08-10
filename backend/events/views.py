@@ -10,6 +10,7 @@ vazamentos ("esqueci de filtrar status neste if"). Duas classes, dois querysets.
 """
 
 from django.db.models import Q
+from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, status, viewsets
 from rest_framework.decorators import action
@@ -95,21 +96,64 @@ class PublicEventSeatsView(generics.ListAPIView):
         )
 
 
+# Ordenações que o painel oferece. É um DE-PARA, não uma lista de campos:
+# passar o parâmetro cru para order_by() deixaria o cliente ordenar por
+# qualquer coluna ou relação ("organizer__password"), e a ordem de um resultado
+# revela o conteúdo do campo mesmo sem exibi-lo.
+ORDENACOES = {
+    "starts_at": ("starts_at",),
+    "-starts_at": ("-starts_at",),
+    # Desempate por data: sem ele, eventos com o mesmo sold_count trocam de
+    # lugar entre requisições e a paginação repete ou pula linhas.
+    "-sold_count": ("-sold_count", "starts_at"),
+    "-created_at": ("-created_at",),
+}
+
+
 class OrganizerEventViewSet(viewsets.ModelViewSet):
     """CRUD dos eventos DO ORGANIZADOR LOGADO."""
 
     serializer_class = EventSerializer
     permission_classes = (IsOrganizer,)
 
+    @extend_schema(parameters=[
+        OpenApiParameter("status", str, description="DRAFT ou PUBLISHED"),
+        OpenApiParameter("when", str, description="upcoming (futuros) ou past (já aconteceram)"),
+        OpenApiParameter("ordering", str, enum=sorted(ORDENACOES)),
+    ])
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         # A dona da autorização é esta linha. Um organizador não enxerga nem
         # edita evento de outro, mesmo sabendo o id — o objeto simplesmente não
         # está no queryset, então PATCH /api/organizer/events/99 dá 404.
-        return (
+        qs = (
             Event.objects.filter(organizer=self.request.user)
             .prefetch_related("seats")
             .com_preco_inicial()
         )
+
+        # Filtro e ordenação ficam no BANCO, e não na tela. A lista é paginada
+        # de 12 em 12: filtrar no front só reordenaria a página atual e
+        # esconderia o resto — um organizador com 20 eventos veria "nenhum
+        # rascunho" tendo três deles na página 2.
+        p = self.request.query_params
+
+        if (status_pedido := p.get("status", "").strip().upper()) in Event.Status.values:
+            qs = qs.filter(status=status_pedido)
+
+        agora = timezone.now()
+        when = p.get("when", "").strip().lower()
+        if when == "upcoming":
+            qs = qs.filter(starts_at__gte=agora)
+        elif when == "past":
+            qs = qs.filter(starts_at__lt=agora)
+
+        if ordem := ORDENACOES.get(p.get("ordering", "").strip()):
+            qs = qs.order_by(*ordem)
+
+        return qs
 
     def perform_create(self, serializer):
         serializer.save(organizer=self.request.user)

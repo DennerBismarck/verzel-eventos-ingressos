@@ -122,3 +122,30 @@ class GateUndoSerializer(serializers.Serializer):
     """O `code` do ingresso a devolver ao estado válido."""
 
     code = serializers.CharField()
+
+
+class ProximoEventoSerializer(serializers.Serializer):
+    """O evento publicado mais próximo — o card "o que vem a seguir"."""
+
+    id = serializers.IntegerField()
+    title = serializers.CharField()
+    venue = serializers.CharField()
+    starts_at = serializers.DateTimeField()
+    sold_count = serializers.IntegerField()
+    capacity = serializers.IntegerField()
+
+
+class OrganizerSummarySerializer(serializers.Serializer):
+    """
+    Cabeçalho do painel do organizador.
+
+    Serializer só de leitura, sem model por trás: os números vêm de três
+    tabelas diferentes. Existe para o Swagger documentar o formato — em
+    especial que `revenue` é STRING, e não número JSON.
+    """
+
+    revenue = serializers.CharField()
+    tickets_sold = serializers.IntegerField()
+    upcoming_count = serializers.IntegerField()
+    past_count = serializers.IntegerField()
+    next_event = ProximoEventoSerializer(allow_null=True)

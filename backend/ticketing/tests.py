@@ -1031,3 +1031,130 @@ class PortariaPlacarTest(TestCase):
             len(poucos), len(muitos),
             "a lista da portaria recarrega a cada validação: N+1 aqui é caro",
         )
+
+
+class ResumoDoOrganizadorTest(TestCase):
+    """
+    O cabeçalho do painel: receita, ingressos e o próximo evento, somando
+    TODOS os eventos do organizador.
+    """
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.client = APIClient()
+        self.org, self.evento = _make_world(capacity=20, price="30.00")
+        self.cliente = User.objects.create_user(
+            email="comprador@t.dev", password="x", full_name="Caio", role=User.Role.CUSTOMER
+        )
+        self.url = reverse("organizer-summary")
+
+    def _evento(self, titulo, dias, status=Event.Status.PUBLISHED, organizer=None, preco="10.00"):
+        return Event.objects.create(
+            organizer=organizer or self.org,
+            source=Event.Source.TMDB,
+            external_id=titulo,
+            title=titulo,
+            venue="Arena",
+            starts_at=timezone.now() + timedelta(days=dias),
+            kind=Event.Kind.GA,
+            status=status,
+            price=Decimal(preco),
+            capacity=50,
+        )
+
+    def _comprar(self, evento, quantidade=1, pagar=True):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=evento.pk, quantity=quantidade
+        )
+        if pagar:
+            services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+        return r
+
+    def _get(self, usuario=None):
+        self.client.force_authenticate(usuario or self.org)
+        return self.client.get(self.url).json()
+
+    def test_soma_a_receita_de_todos_os_eventos(self):
+        outro = self._evento("Segundo", dias=9, preco="25.00")
+        self._comprar(self.evento, 2)   # 60,00
+        self._comprar(outro, 4)         # 100,00
+
+        self.assertEqual(self._get()["revenue"], "160.00")
+
+    def test_receita_nao_multiplica_pelo_numero_de_ingressos(self):
+        """
+        Regressão do bug clássico de agregação: pedir Sum("total_price") num
+        queryset que também junta tickets repete a linha da reserva uma vez por
+        ingresso. Uma reserva de 3 × R$ 30 valeria R$ 270 em vez de R$ 90.
+        """
+        self._comprar(self.evento, 3)
+
+        dados = self._get()
+        self.assertEqual(dados["revenue"], "90.00")
+        self.assertEqual(dados["tickets_sold"], 3)
+
+    def test_receita_ignora_reserva_nao_paga(self):
+        self._comprar(self.evento, 2, pagar=True)
+        self._comprar(self.evento, 5, pagar=False)
+
+        dados = self._get()
+        self.assertEqual(dados["revenue"], "60.00")
+        # A pendente já ocupa estoque (sold_count = 7), mas não emitiu ingresso
+        # nem virou dinheiro. O card conta ingresso justamente por isso.
+        self.evento.refresh_from_db()
+        self.assertEqual(self.evento.sold_count, 7)
+        self.assertEqual(dados["tickets_sold"], 2)
+
+    def test_nao_conta_evento_de_outro_organizador(self):
+        alheio = User.objects.create_user(
+            email="org2@t.dev", password="x", full_name="Org2", role=User.Role.ORGANIZER
+        )
+        de_outro = self._evento("Do outro", dias=2, organizer=alheio, preco="99.00")
+        self._comprar(de_outro, 3)
+        self._comprar(self.evento, 1)
+
+        dados = self._get()
+        self.assertEqual(dados["revenue"], "30.00")
+        self.assertEqual(dados["tickets_sold"], 1)
+        self.assertEqual(dados["next_event"]["title"], "Show de Teste")
+
+    def test_proximo_evento_e_o_publicado_mais_perto(self):
+        self._evento("Daqui a um mês", dias=30)
+        logo = self._evento("Depois de amanhã", dias=2)
+
+        proximo = self._get()["next_event"]
+        self.assertEqual(proximo["id"], logo.pk)
+        self.assertEqual(proximo["capacity"], 50)
+
+    def test_proximo_evento_ignora_rascunho_e_passado(self):
+        self._evento("Rascunho de amanhã", dias=1, status=Event.Status.DRAFT)
+        self._evento("Já aconteceu", dias=-1)
+
+        # Sobra só o do setUp, daqui a 5 dias.
+        self.assertEqual(self._get()["next_event"]["title"], "Show de Teste")
+
+    def test_proximo_evento_nulo_quando_nao_ha_futuro(self):
+        Event.objects.update(starts_at=timezone.now() - timedelta(days=1))
+
+        dados = self._get()
+        self.assertIsNone(dados["next_event"])
+        self.assertEqual(dados["upcoming_count"], 0)
+        self.assertEqual(dados["past_count"], 1)
+
+    def test_conta_futuros_e_passados_para_as_abas(self):
+        self._evento("Passado 1", dias=-10)
+        self._evento("Passado 2", dias=-3, status=Event.Status.DRAFT)
+        self._evento("Futuro", dias=3)
+
+        dados = self._get()
+        self.assertEqual(dados["upcoming_count"], 2)
+        self.assertEqual(dados["past_count"], 2)
+
+    def test_cliente_nao_ve_o_resumo(self):
+        self.client.force_authenticate(self.cliente)
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_receita_zerada_vem_como_string(self):
+        """Dinheiro é string em toda a API; zero não pode virar 0 (número)."""
+        self.assertEqual(self._get()["revenue"], "0.00")

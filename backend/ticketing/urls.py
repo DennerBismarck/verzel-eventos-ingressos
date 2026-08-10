@@ -7,6 +7,7 @@ from .views import (
     GateValidateView,
     MyTicketsView,
     OrganizerSalesView,
+    OrganizerSummaryView,
     ReservationViewSet,
     SharedTicketView,
 )
@@ -20,6 +21,7 @@ urlpatterns = [
     # de eventos não engole esta URL: a rota de detalhe dele termina em "$",
     # então "/sales" não casa e a resolução segue até aqui.
     path("organizer/events/<int:pk>/sales", OrganizerSalesView.as_view(), name="organizer-sales"),
+    path("organizer/summary", OrganizerSummaryView.as_view(), name="organizer-summary"),
     path("tickets", MyTicketsView.as_view(), name="my-tickets"),
     path("shared/<uuid:share_token>", SharedTicketView.as_view(), name="shared-ticket"),
     path("gate/events", GateEventsView.as_view(), name="gate-events"),

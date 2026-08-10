@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from django.db.models import Count, Q, Sum
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import generics, status
 from rest_framework.decorators import action
@@ -26,6 +27,7 @@ from .models import Reservation, Ticket
 from .serializers import (
     GateUndoSerializer,
     GateValidateSerializer,
+    OrganizerSummarySerializer,
     PaymentSerializer,
     ReservationCreateSerializer,
     ReservationSerializer,
@@ -204,6 +206,71 @@ class OrganizerSalesView(APIView):
         }
 
         return Response({"summary": resumo, "sales": SaleSerializer(reservas, many=True).data})
+
+
+class OrganizerSummaryView(APIView):
+    """
+    Cabeçalho do painel: quanto entrou, quantos ingressos saíram e o que vem
+    a seguir — somando TODOS os eventos do organizador.
+
+    Vive aqui, e não em events/, porque o assunto é venda: dois dos três
+    números moram em Reservation e Ticket. E é agregação de banco, não soma da
+    lista que a tela recebeu: a listagem é paginada de 12 em 12, então somar o
+    que está na tela daria um total errado para quem tem mais de 12 eventos.
+    """
+
+    permission_classes = (IsOrganizer,)
+
+    @extend_schema(responses=OrganizerSummarySerializer)
+    def get(self, request):
+        agora = timezone.now()
+        meus_eventos = Event.objects.filter(organizer=request.user)
+
+        # Só reserva PAGA vira receita — pendente ainda pode ser recusada.
+        receita = Reservation.objects.filter(
+            event__organizer=request.user, status=Reservation.Status.PAID
+        ).aggregate(total=Sum("total_price"))["total"] or Decimal("0")
+
+        # Query separada da receita de propósito: pedir Sum("total_price") num
+        # queryset que também junta tickets multiplicaria cada reserva pelo
+        # número de ingressos dela e inflaria o faturamento.
+        #
+        # E conta INGRESSO, não sold_count: sold_count já sobe na reserva, que
+        # ainda pode não ser paga. Ingresso só existe depois do pagamento
+        # confirmado, então este número anda junto com a receita ao lado.
+        ingressos = Ticket.objects.filter(event__organizer=request.user).count()
+
+        # Uma passada na tabela de eventos para as duas abas.
+        abas = meus_eventos.aggregate(
+            futuros=Count("id", filter=Q(starts_at__gte=agora)),
+            passados=Count("id", filter=Q(starts_at__lt=agora)),
+        )
+
+        # Só PUBLISHED: um rascunho não tem compromisso com ninguém ainda, e
+        # anunciá-lo como "próximo evento" ao lado da receita confundiria o que
+        # está de pé com o que ainda é ideia.
+        proximo = (
+            meus_eventos.filter(status=Event.Status.PUBLISHED, starts_at__gte=agora)
+            .order_by("starts_at")
+            .first()
+        )
+
+        return Response({
+            # str() com 2 casas, e não o Decimal cru: num dicionário solto o DRF
+            # serializa Decimal como NÚMERO JSON e o JavaScript o lê como float.
+            "revenue": str(receita.quantize(Decimal("0.01"))),
+            "tickets_sold": ingressos,
+            "upcoming_count": abas["futuros"],
+            "past_count": abas["passados"],
+            "next_event": proximo and {
+                "id": proximo.pk,
+                "title": proximo.title,
+                "venue": proximo.venue,
+                "starts_at": proximo.starts_at,
+                "sold_count": proximo.sold_count,
+                "capacity": proximo.capacity,
+            },
+        })
 
 
 class GateValidateView(APIView):

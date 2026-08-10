@@ -574,3 +574,82 @@ class CatalogoViewTest(APITestCase):
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.json()[0]["title"], "Duna: Parte Dois")
 
+
+class FiltroDoPainelTest(APITestCase):
+    """
+    Filtro e ordenação do painel do organizador.
+
+    Ficam no banco, e não na tela: a lista é paginada de 12 em 12, então
+    filtrar no front só reordenaria a página atual e esconderia o resto.
+    """
+
+    def setUp(self):
+        self.org = User.objects.create_user(
+            email="org@b.dev", password=SENHA, full_name="Org", role=User.Role.ORGANIZER
+        )
+        self.outro = User.objects.create_user(
+            email="outro@b.dev", password=SENHA, full_name="Outro", role=User.Role.ORGANIZER
+        )
+        self.lista = reverse("organizer-event-list")
+
+        self.futuro = criar_evento(
+            self.org, external_id="1", title="Futuro", starts_at=daqui(20), sold_count=5
+        )
+        self.rascunho = criar_evento(
+            self.org, external_id="2", title="Rascunho", starts_at=daqui(3),
+            status=Event.Status.DRAFT,
+        )
+        self.passado = criar_evento(
+            self.org, external_id="3", title="Passado", starts_at=daqui(-4), sold_count=40
+        )
+        self.client.force_authenticate(self.org)
+
+    def titulos(self, **params):
+        return [e["title"] for e in self.client.get(self.lista, params).json()["results"]]
+
+    def test_sem_parametro_traz_tudo_por_data_crescente(self):
+        self.assertEqual(self.titulos(), ["Passado", "Rascunho", "Futuro"])
+
+    def test_filtra_por_status(self):
+        self.assertEqual(self.titulos(status="DRAFT"), ["Rascunho"])
+        self.assertEqual(self.titulos(status="PUBLISHED"), ["Passado", "Futuro"])
+
+    def test_separa_futuros_de_passados(self):
+        self.assertEqual(self.titulos(when="upcoming"), ["Rascunho", "Futuro"])
+        self.assertEqual(self.titulos(when="past"), ["Passado"])
+
+    def test_combina_aba_e_status(self):
+        self.assertEqual(self.titulos(when="upcoming", status="PUBLISHED"), ["Futuro"])
+
+    def test_ordena_por_mais_vendidos(self):
+        self.assertEqual(self.titulos(ordering="-sold_count"), ["Passado", "Futuro", "Rascunho"])
+
+    def test_ordena_por_data_decrescente(self):
+        self.assertEqual(self.titulos(ordering="-starts_at"), ["Futuro", "Rascunho", "Passado"])
+
+    def test_ordenacao_desconhecida_cai_no_padrao_em_vez_de_estourar(self):
+        """
+        O parâmetro passa por um DE-PARA, não direto para order_by(). Um campo
+        inventado é ignorado; um campo real mas não oferecido também.
+        """
+        self.assertEqual(self.titulos(ordering="capacity"), ["Passado", "Rascunho", "Futuro"])
+        self.assertEqual(self.titulos(ordering="não-existe"), ["Passado", "Rascunho", "Futuro"])
+
+    def test_ordenar_por_relacao_do_usuario_nao_e_aceito(self):
+        """
+        Ordenar por `organizer__password` não mostra a senha, mas a ORDEM do
+        resultado revela como os hashes se comparam entre si. Nenhum caminho
+        leva entrada do cliente até order_by().
+        """
+        r = self.client.get(self.lista, {"ordering": "organizer__password"})
+        self.assertEqual(r.status_code, status.HTTP_200_OK)
+        self.assertEqual([e["title"] for e in r.json()["results"]],
+                         ["Passado", "Rascunho", "Futuro"])
+
+    def test_status_invalido_nao_zera_a_lista(self):
+        """Filtro que não casa com o enum é ignorado, e não filtra por lixo."""
+        self.assertEqual(len(self.titulos(status="EXCLUIDO")), 3)
+
+    def test_filtro_nao_atravessa_organizador(self):
+        criar_evento(self.outro, external_id="9", title="Alheio", starts_at=daqui(1))
+        self.assertNotIn("Alheio", self.titulos(when="upcoming"))
