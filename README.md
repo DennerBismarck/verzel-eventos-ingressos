@@ -80,16 +80,33 @@ Senha de **todos**: `verzel123`
 `python manage.py seed` é idempotente (rodar de novo não duplica).
 Use `--reset` para recriar do zero.
 
-Também cria **12 eventos** do organizador acima:
+Também cria **14 eventos** do organizador acima:
 
 - **10 de pista publicados** — um deles já esgotado, para exibir esse estado;
 - **1 em rascunho** — prova que a vitrine pública filtra por status;
+- **2 já encerrados** — alimentam a aba "Já aconteceram" do painel e mostram
+  que a vitrine pública não anuncia sessão com data vencida;
 - **1 de lugar marcado** — teatro de 80 poltronas em duas seções com preços
   diferentes (Plateia R$ 90, Balcão R$ 60) e 12 lugares já ocupados, para o mapa
   não abrir todo verde.
 
 As datas são relativas ao dia em que o seed roda — então o seed nunca "vence" —
 e o horário é fixo e plausível.
+
+E cria o **histórico de vendas por trás desses números**: ~670 ingressos em
+reservas pagas, distribuídas numa plateia de 8 compradores fictícios
+(`*@exemplo.dev`), com datas espalhadas pelo mês anterior a cada sessão.
+
+Sem isso, `sold_count` era um contador solto: o painel mostrava "148/160
+vendidos" e "Receita confirmada R$ 0,00" na mesma tela, e a tabela de vendas de
+cada evento abria vazia. Os compradores fictícios são separados de
+`cliente1`/`cliente2` de propósito — se o histórico saísse no nome deles, a
+carteira das contas de teste abriria com centenas de ingressos e você não
+acharia a compra que acabou de fazer.
+
+Os pagamentos gerados pelo seed ficam marcados no campo `reason` (o fluxo real
+o deixa vazio em pagamento confirmado). É o que permite ao seed limpar um
+evento obsoleto sem risco de apagar uma compra de verdade.
 
 ### Chaves das APIs externas
 

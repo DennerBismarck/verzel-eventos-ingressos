@@ -19,7 +19,7 @@ from django.utils import timezone
 
 from events.models import Event, Seat
 from events.services import generate_seats
-from ticketing.models import Reservation, Ticket
+from ticketing.models import Payment, Reservation, Ticket
 
 User = get_user_model()
 
@@ -31,6 +31,38 @@ USUARIOS = [
     ("cliente2@verzel.dev", "Clara Cliente", User.Role.CUSTOMER),
     ("portaria@verzel.dev", "Pedro Portaria", User.Role.GATE),
 ]
+
+# Plateia de demonstração: quem "comprou" os ingressos que sustentam o
+# sold_count de cada evento.
+#
+# Separada de cliente1/cliente2 de propósito. Se o histórico saísse no nome
+# deles, a carteira das contas de teste abriria com centenas de ingressos e
+# quem for avaliar não acharia a compra que acabou de fazer. De quebra, a
+# tabela de vendas do organizador mostra nomes variados, como numa bilheteria
+# de verdade, em vez do mesmo comprador repetido 40 vezes.
+PLATEIA = [
+    ("bianca.rocha@exemplo.dev", "Bianca Rocha"),
+    ("davi.matos@exemplo.dev", "Davi Matos"),
+    ("elisa.prado@exemplo.dev", "Elisa Prado"),
+    ("fabio.nunes@exemplo.dev", "Fábio Nunes"),
+    ("helena.braga@exemplo.dev", "Helena Braga"),
+    ("igor.tavares@exemplo.dev", "Igor Tavares"),
+    ("julia.campos@exemplo.dev", "Júlia Campos"),
+    ("marcos.leite@exemplo.dev", "Marcos Leite"),
+]
+
+# Marca gravada nos pagamentos que este comando cria. O fluxo real deixa
+# `reason` VAZIO em pagamento confirmado — só recusa escreve motivo —, então a
+# marca não colide com nada e deixa explícito, no banco e no admin, quais
+# vendas são de demonstração. É o que permite limpar um evento obsoleto sem
+# arriscar apagar uma compra feita por quem estiver avaliando.
+MARCA_SEED = "Venda de demonstração criada pelo seed"
+
+# Tamanhos de compra, em ciclo FIXO. Nada de random: o seed roda no build da
+# Render, e dois deploys precisam produzir o mesmo banco. Com sorteio, cada
+# execução contaria uma história diferente e nenhum número seria reproduzível.
+# O teto é 5 porque a partir de 6 o pagamento é recusado (LIMITE_RECUSA).
+LOTES = (2, 1, 3, 1, 4, 2, 1, 5, 2, 3)
 
 # (external_id, título, cartaz, local, dias, hora, preço, capacidade, status)
 #
@@ -256,7 +288,7 @@ class Command(BaseCommand):
     # não fica num meio-termo estranho.
     @transaction.atomic
     def handle(self, *args, **options):
-        emails = [email for email, _, _ in USUARIOS]
+        emails = [email for email, _, _ in USUARIOS] + [email for email, _ in PLATEIA]
 
         if options["reset"]:
             # A ordem aqui é ditada pelos on_delete=PROTECT, de dentro para fora:
@@ -282,6 +314,16 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.SUCCESS(f"  + {email} ({papel})"))
             else:
                 self.stdout.write(f"  = {email} já existia")
+
+        plateia = []
+        for email, nome in PLATEIA:
+            espectador, criado = User.objects.get_or_create(
+                email=email, defaults={"full_name": nome, "role": User.Role.CUSTOMER}
+            )
+            if criado:
+                espectador.set_password(SENHA_PADRAO)
+                espectador.save(update_fields=["password"])
+            plateia.append(espectador)
 
         organizador = User.objects.get(email="organizador@verzel.dev")
         # localtime() e não now(): now() devolve UTC, e trocar a hora ali
@@ -332,12 +374,14 @@ class Command(BaseCommand):
                 evento.save(update_fields=list(apresentacao))
                 marca = "~"
 
+            novos = self._gerar_vendas(evento, plateia, agora)
             self.stdout.write(
                 f"  {marca} {titulo} ({evento.status}, "
-                f"{evento.sold_count}/{evento.capacity} vendidos)"
+                f"{evento.sold_count}/{evento.capacity} vendidos"
+                + (f", +{novos} ingressos emitidos)" if novos else ")")
             )
 
-        self._evento_com_lugar_marcado(organizador, agora)
+        self._evento_com_lugar_marcado(organizador, agora, plateia)
 
         # Remove eventos de seed que saíram da lista (ex.: o elenco antigo, sem
         # cartaz). Só os que ninguém reservou — se houver reserva, o evento
@@ -347,19 +391,114 @@ class Command(BaseCommand):
             organizer=organizador, source=Event.Source.TMDB
         ).exclude(external_id__in=conhecidos)
 
+        # Reservas nascidas AQUI não contam como histórico de verdade — foi o
+        # próprio seed que as inventou. Sem esta distinção, gerar as vendas de
+        # demonstração desarmaria a limpeza: todo evento passaria a ter reserva
+        # e nenhum obsoleto seria removido nunca mais.
+        de_demonstracao = Payment.objects.filter(reason=MARCA_SEED).values("reservation_id")
+
         for evento in obsoletos:
-            if evento.reservations.exists():
+            if evento.reservations.exclude(pk__in=de_demonstracao).exists():
                 self.stdout.write(
                     self.style.WARNING(f"  ! {evento.title}: fora da lista, mas tem reservas")
                 )
                 continue
+            # PROTECT manda a ordem: ingresso -> reserva -> evento.
+            Ticket.objects.filter(event=evento).delete()
+            evento.reservations.all().delete()
             self.stdout.write(f"  - {evento.title} (removido: fora da lista)")
             evento.delete()
 
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(f"Seed pronto. Senha de todos: {SENHA_PADRAO}"))
 
-    def _evento_com_lugar_marcado(self, organizador, agora):
+    def _gerar_vendas(self, evento, plateia, agora):
+        """
+        Cria as reservas PAGAS que sustentam o `sold_count` do evento.
+
+        Antes, o seed escrevia `sold_count` na mão e não existia reserva
+        nenhuma por trás. O painel do organizador mostrava, na mesma tela,
+        "148/160 vendidos" e "Receita confirmada R$ 0,00" — porque o estoque
+        vinha de um contador e o dinheiro vinha das reservas, e só um dos dois
+        era real. A tabela de vendas de cada evento também abria vazia.
+
+        Idempotente: conta os ingressos que já existem e só cria a diferença.
+        Rodar o seed de novo não duplica venda, e uma compra feita por quem
+        estiver avaliando é preservada (ela também conta para o total).
+        """
+        faltam = evento.sold_count - Ticket.objects.filter(event=evento).count()
+        if faltam <= 0:
+            return 0
+
+        # Em lugar marcado o ingresso aponta uma poltrona específica. As
+        # poltronas já estão marcadas como vendidas; aqui só emitimos o
+        # ingresso das que ainda não têm um.
+        poltronas = []
+        if evento.kind == Event.Kind.SEATED:
+            poltronas = list(
+                Seat.objects.filter(
+                    event=evento, status=Seat.Status.SOLD, tickets__isnull=True
+                )
+            )
+
+        # Janela de compra: o mês anterior à sessão, sem passar de agora — uma
+        # venda com data posterior ao próprio evento entregaria o artifício.
+        fim = min(agora, evento.starts_at)
+        emitidos = 0
+        i = 0
+
+        while faltam > 0:
+            quantidade = min(LOTES[i % len(LOTES)], faltam)
+            if poltronas:
+                escolhidas = poltronas[emitidos : emitidos + quantidade]
+                quantidade = len(escolhidas)
+                if quantidade == 0:
+                    break
+                total = sum(p.price for p in escolhidas)
+            else:
+                escolhidas = []
+                total = evento.price * quantidade
+
+            cliente = plateia[i % len(plateia)]
+            reserva = Reservation.objects.create(
+                customer=cliente,
+                event=evento,
+                status=Reservation.Status.PAID,
+                quantity=quantidade,
+                total_price=total,
+            )
+            if escolhidas:
+                reserva.seats.set(escolhidas)
+
+            Payment.objects.create(
+                reservation=reserva,
+                status=Payment.Status.CONFIRMED,
+                reason=MARCA_SEED,
+            )
+            Ticket.objects.bulk_create([
+                Ticket(
+                    reservation=reserva,
+                    event=evento,
+                    customer=cliente,
+                    seat=escolhidas[n] if escolhidas else None,
+                )
+                for n in range(quantidade)
+            ])
+
+            # created_at é auto_now_add: sem este UPDATE toda venda nasceria
+            # com a data do deploy, inclusive as de uma sessão que já
+            # aconteceu. O passo de 7h espalha as compras pela janela.
+            Reservation.objects.filter(pk=reserva.pk).update(
+                created_at=fim - timedelta(hours=(i * 7) % (30 * 24))
+            )
+
+            emitidos += quantidade
+            faltam -= quantidade
+            i += 1
+
+        return emitidos
+
+    def _evento_com_lugar_marcado(self, organizador, agora, plateia):
         spec = EVENTO_COM_LUGAR
         quando = (agora + timedelta(days=spec["dias"])).replace(
             hour=spec["hora"], minute=0, second=0, microsecond=0
@@ -395,8 +534,10 @@ class Command(BaseCommand):
         # que um ingresso emitido aponta — e generate_seats recusaria de
         # qualquer forma assim que houvesse venda de verdade.
         if evento.seats.exists():
+            novos = self._gerar_vendas(evento, plateia, agora)
             self.stdout.write(
-                f"  = {spec['title']} (mapa já existe, {evento.seats.count()} lugares)"
+                f"  = {spec['title']} (mapa já existe, {evento.seats.count()} lugares"
+                + (f", +{novos} ingressos emitidos)" if novos else ")")
             )
             return
 
@@ -414,4 +555,8 @@ class Command(BaseCommand):
         evento.sold_count = ocupadas
         evento.save(update_fields=["sold_count"])
 
-        self.stdout.write(f"  + {spec['title']} ({total} lugares, {ocupadas} ocupados)")
+        novos = self._gerar_vendas(evento, plateia, agora)
+        self.stdout.write(
+            f"  + {spec['title']} ({total} lugares, {ocupadas} ocupados, "
+            f"{novos} ingressos emitidos)"
+        )
