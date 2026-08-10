@@ -767,3 +767,89 @@ class PrazoDeReservaTest(TestCase):
         call_command("expirar_reservas", stdout=StringIO())
         r.refresh_from_db()
         self.assertEqual(r.status, Reservation.Status.EXPIRED)
+
+
+class ConsultasTest(TestCase):
+    """
+    Trava o número de idas ao banco nas listagens.
+
+    A asserção compara "poucos dados" contra "muitos dados" e exige o MESMO
+    número de queries, em vez de cravar um valor. Um número fixo quebraria a
+    cada middleware ou índice novo sem que nada de errado tivesse acontecido —
+    o que interessa é a listagem não ficar mais lenta à medida que o cliente
+    compra mais.
+    """
+
+    def setUp(self):
+        from rest_framework.test import APIClient
+
+        self.client = APIClient()
+        _, self.evento = _make_world(capacity=50, price="20.00")
+        self.cliente = User.objects.create_user(
+            email="q@t.dev", password="x", full_name="Q", role=User.Role.CUSTOMER
+        )
+        self.client.force_authenticate(self.cliente)
+
+    def _comprar(self, quantidade=2):
+        r = services.create_reservation(
+            customer=self.cliente, event_id=self.evento.pk, quantity=quantidade
+        )
+        services.pay_reservation(reservation_id=r.pk, customer=self.cliente)
+
+    def test_listar_reservas_nao_cresce_em_queries(self):
+        """
+        O serializer aninhado lê event_title, venue e seat_label de CADA
+        ingresso. Sem prefetch de tickets__event e tickets__seat, eram duas
+        queries por ingresso — 17 no total para 5 reservas, e subindo.
+        """
+        self._comprar()
+        with CaptureQueriesContext(connection) as poucas:
+            self.client.get(reverse("reservation-list"))
+
+        for _ in range(5):
+            self._comprar()
+        with CaptureQueriesContext(connection) as muitas:
+            self.client.get(reverse("reservation-list"))
+
+        self.assertEqual(
+            len(poucas), len(muitas),
+            f"1 reserva usou {len(poucas)} queries e 6 usaram {len(muitas)}: N+1 de volta",
+        )
+
+    def test_carteira_de_ingressos_nao_cresce_em_queries(self):
+        self._comprar(1)
+        with CaptureQueriesContext(connection) as poucas:
+            self.client.get(reverse("my-tickets"))
+
+        self._comprar(6)
+        with CaptureQueriesContext(connection) as muitas:
+            self.client.get(reverse("my-tickets"))
+
+        self.assertEqual(len(poucas), len(muitas))
+
+    def test_vitrine_nao_cresce_com_o_numero_de_eventos(self):
+        from django.utils import timezone as tz
+
+        self.client.force_authenticate(None)
+        with CaptureQueriesContext(connection) as poucos:
+            self.client.get(reverse("event-list"))
+
+        for i in range(8):
+            Event.objects.create(
+                organizer=self.evento.organizer,
+                source=Event.Source.TMDB,
+                external_id=f"extra-{i}",
+                title=f"Extra {i}",
+                venue="X",
+                starts_at=tz.now() + timedelta(days=30),
+                status=Event.Status.PUBLISHED,
+                price=Decimal("10.00"),
+                capacity=10,
+            )
+        with CaptureQueriesContext(connection) as muitos:
+            self.client.get(reverse("event-list"))
+
+        self.assertEqual(
+            len(poucos), len(muitos),
+            "a vitrine é a página mais acessada: N+1 aqui é o pior lugar possível",
+        )
