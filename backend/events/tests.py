@@ -28,6 +28,11 @@ User = get_user_model()
 SENHA = "verzel123456"
 
 
+def daqui(dias):
+    """Data relativa a agora. Negativo = passado."""
+    return timezone.now() + timedelta(days=dias)
+
+
 def criar_evento(organizer, **kwargs):
     dados = {
         "source": Event.Source.TMDB,
@@ -90,6 +95,28 @@ class VitrinePublicaTest(APITestCase):
         self.publicado.save(update_fields=["sold_count"])
         r = self.client.get(reverse("event-detail", args=[self.publicado.pk]))
         self.assertEqual(r.json()["available"], 30)
+
+    def test_vitrine_sai_em_ordem_de_data(self):
+        """
+        Regressão: `com_preco_inicial()` anota um Min() sobre `seats`, e
+        annotate() com agregação de relação múltipla DESCARTA o Meta.ordering.
+        A vitrine passou a sair sem ORDER BY nenhum — na prática na ordem de
+        inserção, e sem garantia de estabilidade entre páginas.
+        """
+        criar_evento(self.org, external_id="7", title="Depois", starts_at=daqui(40))
+        criar_evento(self.org, external_id="8", title="Antes", starts_at=daqui(1))
+
+        titulos = [e["title"] for e in self.client.get(reverse("event-list")).json()["results"]]
+        self.assertEqual(titulos, ["Antes", "Duna", "Depois"])
+
+    def test_a_consulta_da_vitrine_tem_order_by(self):
+        """
+        O teste acima passaria por acidente se o banco devolvesse na ordem de
+        inserção. Este olha o SQL: sem ORDER BY, a paginação pode repetir uma
+        linha na página 2 e nunca mostrar outra.
+        """
+        sql = str(Event.objects.com_preco_inicial().query)
+        self.assertIn("ORDER BY", sql)
 
 
 class PainelDoOrganizadorTest(APITestCase):
@@ -546,3 +573,4 @@ class CatalogoViewTest(APITestCase):
             r = self.client.get(self.url, {"source": "TMDB", "q": "duna"})
         self.assertEqual(r.status_code, status.HTTP_200_OK)
         self.assertEqual(r.json()[0]["title"], "Duna: Parte Dois")
+

@@ -26,8 +26,20 @@ class EventQuerySet(models.QuerySet):
         Anota o menor preço de assento, para o `price_from` não custar uma
         query por evento na vitrine — que é a página mais acessada e onde um
         N+1 dói mais.
+
+        O order_by() no fim não é enfeite. annotate() com agregação sobre
+        relação múltipla monta um GROUP BY, e o Django DESCARTA o Meta.ordering
+        nesse caso (senão a coluna da ordenação entraria no agrupamento e
+        mudaria o resultado). Sem esta linha o SELECT sai sem ORDER BY: o banco
+        devolve na ordem que quiser, e numa lista PAGINADA isso faz a página 2
+        repetir linhas da 1 e sumir com outras.
+
+        Fica aqui, e não em cada view, porque quem chama esta função é quem
+        perde a ordem. Um .order_by() posterior continua vencendo.
         """
-        return self.annotate(_menor_preco_assento=Min("seats__price"))
+        return self.annotate(_menor_preco_assento=Min("seats__price")).order_by(
+            *self.model._meta.ordering
+        )
 
 
 class Event(models.Model):
