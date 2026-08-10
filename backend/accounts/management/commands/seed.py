@@ -123,33 +123,71 @@ class Command(BaseCommand):
         agora = timezone.localtime(timezone.now())
 
         for ext_id, titulo, cartaz, local, dias, hora, preco, capacidade, status in EVENTOS:
-            evento, criado = Event.objects.get_or_create(
-                source=Event.Source.TMDB,
-                external_id=ext_id,
-                organizer=organizador,
-                defaults={
-                    "title": titulo,
-                    "description": (
-                        f"Sessão especial de {titulo}, com entrada por ingresso digital. "
-                        "Chegue com 30 minutos de antecedência; o QR é validado na portaria."
-                    ),
-                    "image_url": f"{CARTAZ}{cartaz}",
-                    "venue": local,
-                    "starts_at": (agora + timedelta(days=dias)).replace(
-                        hour=hora, minute=0, second=0, microsecond=0
-                    ),
-                    "kind": Event.Kind.GA,
-                    "status": status,
-                    "price": Decimal(preco),
-                    "capacity": capacidade,
-                    "sold_count": VENDIDOS.get(ext_id, 0),
-                },
+            quando = (agora + timedelta(days=dias)).replace(
+                hour=hora, minute=0, second=0, microsecond=0
             )
-            marca = "+" if criado else "="
-            vendidos = evento.sold_count
+            # Campos de APRESENTAÇÃO: reescritos a cada execução. É o que torna
+            # o seed declarativo — o deploy seguinte conserta um cartaz trocado
+            # ou uma data que já passou, em vez de deixar o registro antigo
+            # apodrecendo em produção.
+            apresentacao = {
+                "title": titulo,
+                "description": (
+                    f"Sessão especial de {titulo}, com entrada por ingresso digital. "
+                    "Chegue com 30 minutos de antecedência; o QR é validado na portaria."
+                ),
+                "image_url": f"{CARTAZ}{cartaz}",
+                "venue": local,
+                "starts_at": quando,
+                "kind": Event.Kind.GA,
+                "status": status,
+                "price": Decimal(preco),
+            }
+
+            evento = Event.objects.filter(
+                source=Event.Source.TMDB, external_id=ext_id, organizer=organizador
+            ).first()
+
+            if evento is None:
+                evento = Event.objects.create(
+                    source=Event.Source.TMDB,
+                    external_id=ext_id,
+                    organizer=organizador,
+                    capacity=capacidade,
+                    sold_count=VENDIDOS.get(ext_id, 0),
+                    **apresentacao,
+                )
+                marca = "+"
+            else:
+                # ESTOQUE (capacity/sold_count) fica de fora de propósito.
+                # Reescrever aqui apagaria compras reais feitas por quem estiver
+                # avaliando — e baixar a capacidade abaixo do já vendido faria a
+                # CheckConstraint derrubar o deploy inteiro.
+                for campo, valor in apresentacao.items():
+                    setattr(evento, campo, valor)
+                evento.save(update_fields=list(apresentacao))
+                marca = "~"
+
             self.stdout.write(
-                f"  {marca} {titulo} ({status}, {vendidos}/{capacidade} vendidos)"
+                f"  {marca} {titulo} ({evento.status}, "
+                f"{evento.sold_count}/{evento.capacity} vendidos)"
             )
+
+        # Remove eventos de seed que saíram da lista (ex.: o elenco antigo, sem
+        # cartaz). Só os que ninguém reservou — se houver reserva, o evento
+        # deixou de ser dado de demonstração e vira histórico de verdade.
+        obsoletos = Event.objects.filter(
+            organizer=organizador, source=Event.Source.TMDB
+        ).exclude(external_id__in=[e[0] for e in EVENTOS])
+
+        for evento in obsoletos:
+            if evento.reservations.exists():
+                self.stdout.write(
+                    self.style.WARNING(f"  ! {evento.title}: fora da lista, mas tem reservas")
+                )
+                continue
+            self.stdout.write(f"  - {evento.title} (removido: fora da lista)")
+            evento.delete()
 
         self.stdout.write("")
         self.stdout.write(self.style.SUCCESS(f"Seed pronto. Senha de todos: {SENHA_PADRAO}"))
