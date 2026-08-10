@@ -16,7 +16,7 @@ import { SeatMap } from "@/components/seat-map";
 import { Alert, Badge, Button, ContagemRegressiva, Skeleton } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { fullDate, money } from "@/lib/format";
+import { fullDate, money, preco } from "@/lib/format";
 import type { PayResponse, PublicEvent, Reservation, Seat } from "@/lib/types";
 
 const MAX_POR_COMPRA = 8;
@@ -304,9 +304,18 @@ function PainelCompra({
             <span className="text-sm text-muted">
               {comLugarMarcado ? "Lugar marcado" : "Ingresso"}
             </span>
-            {!comLugarMarcado && (
-              <strong className="text-xl font-bold text-ink">{money(evento.price)}</strong>
-            )}
+            <strong className="text-xl font-bold text-ink">
+              {comLugarMarcado ? (
+                <span className="text-base font-normal text-muted">
+                  a partir de{" "}
+                  <span className="text-xl font-bold text-ink">
+                    {preco(evento.price_from)}
+                  </span>
+                </span>
+              ) : (
+                preco(evento.price_from)
+              )}
+            </strong>
           </div>
 
           {esgotado ? (

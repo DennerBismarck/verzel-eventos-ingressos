@@ -46,3 +46,14 @@ export function fullDate(iso: string): string {
 export function shortDate(iso: string): string {
   return CURTA.format(new Date(iso));
 }
+
+/**
+ * Preço para exibição: zero vira "Gratuito", não "R$ 0,00".
+ *
+ * "R$ 0,00" num cartaz de evento parece defeito de sistema, não cortesia — e
+ * foi literalmente o sintoma do bug do preço em lugar marcado.
+ */
+export function preco(valor: string | number): string {
+  const n = typeof valor === "string" ? Number(valor) : valor;
+  return n > 0 ? money(n) : "Gratuito";
+}

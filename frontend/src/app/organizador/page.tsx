@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Alert, Badge, Button, EmptyState, Skeleton } from "@/components/ui";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { money, shortDate } from "@/lib/format";
+import { preco, shortDate } from "@/lib/format";
 import type { OrganizerEvent, Page } from "@/lib/types";
 
 export default function OrganizadorPage() {
@@ -155,7 +155,7 @@ export default function OrganizadorPage() {
                     {ev.venue} · {shortDate(ev.starts_at)}
                   </p>
                   <p className="mt-0.5 text-sm text-muted">
-                    {money(ev.price)} · {ev.kind === "GA" ? "Pista" : "Lugar marcado"}
+                    {preco(ev.price_from)} · {ev.kind === "GA" ? "Pista" : "Lugar marcado"}
                   </p>
                 </div>
 

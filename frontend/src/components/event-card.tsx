@@ -1,6 +1,6 @@
 import Link from "next/link";
 
-import { dateParts, money } from "@/lib/format";
+import { dateParts, preco } from "@/lib/format";
 import type { PublicEvent } from "@/lib/types";
 
 /**
@@ -74,7 +74,7 @@ export function EventCard({ event }: { event: PublicEvent }) {
           ) : (
             <>
               <span className="font-normal text-muted">a partir de </span>
-              {money(event.price)}
+              {preco(event.price_from)}
             </>
           )}
         </p>

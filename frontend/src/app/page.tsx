@@ -16,7 +16,7 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { EventCard, EventCardSkeleton } from "@/components/event-card";
 import { Alert, Button, EmptyState } from "@/components/ui";
 import { api } from "@/lib/api";
-import { dateParts, money } from "@/lib/format";
+import { dateParts, preco } from "@/lib/format";
 import type { EventKind, Page, PublicEvent } from "@/lib/types";
 
 const FILTROS: { valor: EventKind | ""; rotulo: string }[] = [
@@ -222,7 +222,7 @@ function Destaque({ event }: { event: PublicEvent }) {
             </Link>
             <p className="text-sm text-muted">
               a partir de{" "}
-              <strong className="text-base font-bold text-ink">{money(event.price)}</strong>
+              <strong className="text-base font-bold text-ink">{preco(event.price_from)}</strong>
             </p>
           </div>
         </div>

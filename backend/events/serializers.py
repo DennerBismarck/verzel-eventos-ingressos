@@ -18,24 +18,28 @@ from .models import Event, Seat
 class EventPublicSerializer(serializers.ModelSerializer):
     available = serializers.IntegerField(read_only=True)
     organizer_name = serializers.CharField(source="organizer.full_name", read_only=True)
+    # O "a partir de" da vitrine. Em lugar marcado, `price` é zero e o valor
+    # real está nas poltronas — ver Event.price_from.
+    price_from = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
 
     class Meta:
         model = Event
         fields = (
             "id", "title", "description", "image_url", "venue", "starts_at",
-            "kind", "price", "available", "organizer_name", "source",
+            "kind", "price", "price_from", "available", "organizer_name", "source",
         )
 
 
 class EventSerializer(serializers.ModelSerializer):
     available = serializers.IntegerField(read_only=True)
+    price_from = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
 
     class Meta:
         model = Event
         fields = (
             "id", "source", "external_id", "title", "description", "image_url",
-            "venue", "starts_at", "kind", "status", "price", "capacity",
-            "sold_count", "available", "created_at",
+            "venue", "starts_at", "kind", "status", "price", "price_from",
+            "capacity", "sold_count", "available", "created_at",
         )
         # organizer nunca vem do corpo do request: vem de request.user. Se viesse
         # do JSON, um organizador criaria evento no nome de outro.

@@ -29,6 +29,11 @@ export type PublicEvent = {
   starts_at: string;
   kind: EventKind;
   price: string;
+  /**
+   * O "a partir de" real. Em lugar marcado, `price` é 0 e o valor mora nas
+   * poltronas — usar `price` na vitrine anunciava "R$ 0,00" num teatro.
+   */
+  price_from: string;
   available: number;
   organizer_name: string;
   source: Source;

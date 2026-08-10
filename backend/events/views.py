@@ -48,7 +48,11 @@ class PublicEventListView(generics.ListAPIView):
     def get_queryset(self):
         # select_related evita uma query extra por evento para pegar o nome do
         # organizador (problema N+1: 12 eventos = 13 queries sem isto).
-        qs = Event.objects.filter(status=Event.Status.PUBLISHED).select_related("organizer")
+        qs = (
+            Event.objects.filter(status=Event.Status.PUBLISHED)
+            .select_related("organizer")
+            .com_preco_inicial()
+        )
 
         if q := self.request.query_params.get("q", "").strip():
             qs = qs.filter(Q(title__icontains=q) | Q(venue__icontains=q))
@@ -63,7 +67,11 @@ class PublicEventDetailView(generics.RetrieveAPIView):
     # O filtro de status está no queryset, não numa checagem depois do get():
     # assim um evento em rascunho devolve 404, e não 403. Um 403 confirmaria
     # que o evento existe — informação que o público não precisa ter.
-    queryset = Event.objects.filter(status=Event.Status.PUBLISHED).select_related("organizer")
+    queryset = (
+        Event.objects.filter(status=Event.Status.PUBLISHED)
+        .select_related("organizer")
+        .com_preco_inicial()
+    )
 
 
 class PublicEventSeatsView(generics.ListAPIView):
@@ -97,7 +105,11 @@ class OrganizerEventViewSet(viewsets.ModelViewSet):
         # A dona da autorização é esta linha. Um organizador não enxerga nem
         # edita evento de outro, mesmo sabendo o id — o objeto simplesmente não
         # está no queryset, então PATCH /api/organizer/events/99 dá 404.
-        return Event.objects.filter(organizer=self.request.user).prefetch_related("seats")
+        return (
+            Event.objects.filter(organizer=self.request.user)
+            .prefetch_related("seats")
+            .com_preco_inicial()
+        )
 
     def perform_create(self, serializer):
         serializer.save(organizer=self.request.user)

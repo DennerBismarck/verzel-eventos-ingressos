@@ -17,6 +17,17 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.db.models import Min
+
+
+class EventQuerySet(models.QuerySet):
+    def com_preco_inicial(self):
+        """
+        Anota o menor preço de assento, para o `price_from` não custar uma
+        query por evento na vitrine — que é a página mais acessada e onde um
+        N+1 dói mais.
+        """
+        return self.annotate(_menor_preco_assento=Min("seats__price"))
 
 
 class Event(models.Model):
@@ -77,6 +88,8 @@ class Event(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = EventQuerySet.as_manager()
+
     class Meta:
         ordering = ["starts_at"]
         indexes = [
@@ -106,6 +119,27 @@ class Event(models.Model):
     def available(self):
         """Ingressos ainda à venda. Só faz sentido em GA."""
         return max(self.capacity - self.sold_count, 0)
+
+    @property
+    def price_from(self):
+        """
+        O "a partir de" que a vitrine mostra.
+
+        Em evento de pista é o preço único. Em lugar marcado, o `price` do
+        evento é zero por construção — o preço mora em cada poltrona, e seções
+        custam diferente. Ler `price` direto fazia a vitrine anunciar
+        "a partir de R$ 0,00" num teatro de R$ 60.
+
+        Usa a anotação de `com_preco_inicial()` quando existe; o fallback só
+        dispara fora dos caminhos da API, que sempre anotam.
+        """
+        if self.kind != self.Kind.SEATED:
+            return self.price
+
+        anotado = getattr(self, "_menor_preco_assento", None)
+        if anotado is not None:
+            return anotado
+        return self.seats.aggregate(m=Min("price"))["m"] or self.price
 
 
 class Seat(models.Model):
