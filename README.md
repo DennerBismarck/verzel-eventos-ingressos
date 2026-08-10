@@ -308,15 +308,39 @@ Artefatos de contexto usados com a IA estão versionados em [`docs/`](docs/).
 ## O que faltou / não funciona como esperado
 _(seja honesto aqui — o enunciado diz que a ausência de explicação penaliza)_
 
-- **O catálogo externo em produção depende de chave configurada na Render.**
-  Sem `TMDB_API_KEY` / `TICKETMASTER_API_KEY`, `/api/catalog/search` responde
-  **503 com a explicação** em vez de quebrar — o resto da aplicação (vitrine,
-  compra, QR, portaria) funciona normalmente, porque os eventos publicados
-  guardam uma cópia dos dados e não consultam a API externa a cada request.
+Todos os requisitos obrigatórios estão implementados e no ar. O que segue são
+limitações conhecidas, declaradas de propósito.
+
+- **O mapa de assentos não é em tempo real.** O opcional do enunciado cita
+  "mapa de assentos em tempo real"; aqui o mapa carrega ao abrir a página e
+  recarrega após cada tentativa de reserva — não há WebSocket nem _polling_. Se
+  outra pessoa comprar a poltrona enquanto sua tela está aberta, você descobre
+  ao tentar reservar: recebe a mensagem, a seleção é limpa e o mapa é
+  atualizado. **A falta é de conforto, não de correção** — a reserva trava a
+  linha do assento no banco, então duas pessoas nunca levam o mesmo lugar.
+  Ficou de fora por escolha de escopo.
+
+- **A leitura do QR pela câmera não está na suíte automática.** Navegador
+  headless não tem câmera. Ela *foi* verificada, alimentando o Chromium com uma
+  câmera virtual montada a partir de um QR real da própria aplicação — o
+  procedimento está em
+  [`frontend/e2e/manual/verificar-camera.md`](frontend/e2e/manual/verificar-camera.md)
+  para ser reproduzível. Na suíte automática ficam a digitação manual e o
+  comportamento quando a câmera falha.
+
 - **Cobertura da Ticketmaster no Brasil é fraca.** A Discovery API é
   majoritariamente EUA/Europa, então buscar por cidade brasileira costuma voltar
   vazio. Não é bug de integração — é o catálogo deles. Para demonstrar, busque
   termos internacionais (`coldplay`, `eagles`, `nba`). O TMDb, esse sim, responde
   em português e cobre bem o catálogo de filmes.
-- Fluxo de compra, ingresso com QR e portaria: em construção (Dias 1–4).
-- Mapa de assentos: planejado para o Dia 5, depois do fluxo de pista estar no ar.
+
+- **Sem chave de API, o catálogo externo responde 503 explicando** em vez de
+  quebrar. O resto da aplicação (vitrine, compra, QR, portaria) segue
+  funcionando, porque os eventos publicados guardam uma cópia dos dados e não
+  consultam a API externa a cada request. Em produção as duas chaves estão
+  configuradas.
+
+- **O histórico de commits está concentrado.** O enunciado pede commits ao longo
+  da semana, e a maior parte deste projeto foi feita em poucas sessões longas.
+  As mensagens registram o processo — cada correção explica sintoma, causa e
+  decisão — mas as datas não espelham sete dias de trabalho espaçado.
