@@ -3,8 +3,9 @@
 Desafio Elite Dev (Verzel) — organizador publica eventos a partir de um catálogo externo,
 cliente compra ingressos com QR, portaria valida na entrada.
 
-> **Status:** fluxo de pista completo — vitrine, compra, ingresso com QR assinado,
-> compartilhamento por link e validação na portaria. Mapa de assentos pendente.
+> **Status:** escopo completo e publicado — vitrine, compra por pista **e por
+> lugar marcado**, ingresso com QR assinado, compartilhamento por link e
+> validação na portaria.
 > Planejamento em [`docs/PLANNING.md`](docs/PLANNING.md), decisões em [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
 ## Stack
@@ -78,10 +79,16 @@ Senha de **todos**: `verzel123`
 `python manage.py seed` é idempotente (rodar de novo não duplica).
 Use `--reset` para recriar do zero.
 
-Também cria **11 eventos de pista** do organizador acima: 10 publicados (um deles
-já esgotado, para exibir esse estado) e 1 em rascunho, que prova que a vitrine
-pública filtra por status. As datas são relativas ao dia em que o seed roda —
-então o seed nunca "vence" — e o horário é fixo e plausível.
+Também cria **12 eventos** do organizador acima:
+
+- **10 de pista publicados** — um deles já esgotado, para exibir esse estado;
+- **1 em rascunho** — prova que a vitrine pública filtra por status;
+- **1 de lugar marcado** — teatro de 80 poltronas em duas seções com preços
+  diferentes (Plateia R$ 90, Balcão R$ 60) e 12 lugares já ocupados, para o mapa
+  não abrir todo verde.
+
+As datas são relativas ao dia em que o seed roda — então o seed nunca "vence" —
+e o horário é fixo e plausível.
 
 ### Chaves das APIs externas
 
@@ -111,6 +118,8 @@ Documentação interativa: **`/api/docs`** (Swagger UI, gerado do código via dr
 | GET | `/api/catalog/search` | organizador | Busca no catálogo externo. `?source=TMDB\|TICKETMASTER&q=` |
 | GET/POST | `/api/organizer/events` | organizador | Lista/cria os eventos **do organizador logado** |
 | GET/PATCH/DELETE | `/api/organizer/events/{id}` | organizador | Só os próprios (id alheio devolve 404) |
+| GET | `/api/events/{id}/seats` | público | Mapa de assentos (livre/vendido, sem dizer de quem) |
+| GET/POST | `/api/organizer/events/{id}/seats` | organizador | Lê e (re)gera o mapa por seções |
 | GET/POST | `/api/reservations` | cliente | Lista/cria reserva (já segura o estoque) |
 | POST | `/api/reservations/{id}/pay` | cliente | Pagamento simulado; emite os ingressos |
 | POST | `/api/reservations/{id}/cancel` | cliente | Cancela e devolve ao estoque |
@@ -130,17 +139,18 @@ aleatória não permitiria.
 cd backend && python manage.py test
 ```
 
-**77 testes**, distribuídos assim:
+**96 testes**, distribuídos assim:
 
 | App | Testes | O que cobre |
 |-----|--------|-------------|
-| `ticketing` | 19 | No-double-sell, assinatura do QR, portaria, estoque |
+| `ticketing` | 27 | No-double-sell (pista e assento), QR, portaria, estoque |
 | `accounts` | 27 | Login por e-mail, papel no JWT, permissões por papel |
-| `events` | 31 | Vitrine, painel do organizador, catálogo externo |
+| `events` | 42 | Vitrine, painel, catálogo externo, mapa de assentos |
 
-Destaque para **dois testes de concorrência** que sobem 10 threads disputando 3
-vagas — um com `select_for_update` e outro sem — para demonstrar a race
-condition que o lock elimina. O segundo imprime o resultado na saída:
+Destaque para **três testes de concorrência**: dois sobem 10 threads disputando
+3 vagas de pista — um com `select_for_update` e outro sem, para demonstrar a
+race condition que o lock elimina — e um terceiro põe 10 threads disputando a
+**mesma poltrona**. O segundo imprime o resultado na saída:
 
 ```
 [sem lock] 10 clientes aprovados para 3 vagas; sold_count gravado: 2

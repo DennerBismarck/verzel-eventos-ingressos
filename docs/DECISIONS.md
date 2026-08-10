@@ -44,6 +44,12 @@
 | 37 | Token em `localStorage` | O front (Vercel) e a API (Render) estão em domínios diferentes; cookie HttpOnly cross-site exigiria `SameSite=None` e domínio compartilhado. **Custo assumido:** XSS levaria o token — mitigado por access token de 60 min | Cookie HttpOnly (não viável neste deploy) |
 | 38 | Cartazes do seed **fixos** no código, não buscados na hora | O seed roda no build da Render; não pode depender de a API externa estar de pé nem gastar cota a cada deploy | Buscar no TMDb durante o seed |
 | 39 | Recusa de pagamento devolve **402**, tratada como resultado e não erro | O cliente precisa saber que não tem ingresso. Um 200 com lista vazia seria fácil de ignorar por engano no front | 200 sempre |
+| 40 | `sold_count` do evento sobe **também** em lugar marcado | A verdade sobre QUAL poltrona foi vendida está nas linhas de `Seat`; o contador existe para a vitrine responder "quantos restam" sem contar assentos a cada card, e para a `CheckConstraint` valer nos dois tipos | Derivar `available` contando `Seat` (uma query por evento na listagem = N+1) |
+| 41 | Mapa é gerado por **seções** (nome, nº de filas, lugares por fila, preço) | O organizador descreve a sala em 4 campos em vez de cadastrar 80 poltronas. Os rótulos A, B, C… são gerados pelo sistema | Cadastro poltrona a poltrona; ou pedir a lista de filas digitada ("A,B,C,D,E") |
+| 42 | Refazer o mapa é **bloqueado** assim que houver assento vendido | Recriar apagaria a linha que um ingresso emitido aponta. O `PROTECT` do `Ticket.seat` barraria de qualquer forma, mas com erro de banco em vez de explicação | Permitir sempre; ou versionar mapas (complexidade sem demanda) |
+| 43 | Evento com lugar marcado nasce em **rascunho** | Publicar antes de existir mapa colocaria na vitrine um teatro sem poltrona nenhuma. Vira publicado só depois do mapa criado | Publicar direto e torcer para o organizador montar o mapa em seguida |
+| 44 | Mapa público mostra situação, **nunca o comprador** | Saber que a C4 está ocupada é necessário para escolher; saber de quem, não | Devolver a reserva junto (vazaria quem comprou o quê) |
+| 45 | Rota do mapa **sem paginação** | Paginar o mapa desenharia meia sala na tela | Paginação padrão do DRF |
 | _ | _(adicione as suas ao longo da semana)_ | | |
 
 ## Uso de IA (rascunho — vira seção do README)
@@ -206,6 +212,37 @@ reabriria a porta. O segundo teste chama a permissão direto, sem autenticador.
 **Aprendizado:** quando um teste falha, a primeira pergunta é se ele está
 medindo o que diz medir. Atalho de teste que contorna uma camada também
 contorna as garantias daquela camada.
+
+### Dia 5 — a vitrine mentiria em evento de lugar marcado
+
+**Sintoma:** nenhum, até existir tela. É o tipo de bug que só aparece quando o
+caminho é percorrido de ponta a ponta.
+
+**Causa:** `_reserve_seats` marcava as poltronas como vendidas mas nunca mexia
+no `sold_count` do evento, e `_release_stock` devolvia o assento e **retornava
+antes** de decrementar o contador.
+
+Como `available` lê o contador, um teatro com a sala inteira vendida seguiria
+anunciando todos os lugares livres — e um cancelamento deixaria o contador
+inflado para sempre.
+
+**Por que passou despercebido:** não havia rota para criar assentos. O tipo
+`SEATED` existia no banco, tinha lógica de reserva e até teste de lock, mas era
+inalcançável pela aplicação. Código testado em unidade e nunca exercitado
+inteiro.
+
+**Aprendizado:** cobertura de teste não substitui percorrer o fluxo. Os dois
+lados desse bug estavam em funções testadas.
+
+### Dia 5 — recusar 100 mil objetos depois de construí-los
+
+O gerador de mapa validava os limites **depois** de montar a lista de `Seat`.
+Com 20 seções cheias, seriam 100 mil objetos alocados em memória só para
+responder "não". Reescrito em duas passadas: a primeira valida a forma e
+**conta**, a segunda constrói. Somar é barato; instanciar não.
+
+Foi o teste do mapa gigante que expôs isso — e o mesmo teste também mostrou que
+meu limite estava em `> 5000` quando 50 filas × 100 lugares dão exatamente 5000.
 
 ### Checklist da defesa (marcar quando souber explicar de cabeça, em voz alta)
 - [ ] Por que `select_for_update` resolve o double-sell — e o que acontece sem ele
