@@ -64,22 +64,121 @@ EVENTOS = [
     ("1339713", "Obsessão", "/wUc6IDf5ChjM1UyQye21qFBeJY0.jpg",
      "Espaço Itaú Augusta, São Paulo", 24, 21, "32.00", 70, Event.Status.PUBLISHED),
     # Um esgotado, para a vitrine mostrar o estado "Esgotado" sem ninguém comprar.
-    ("1315772", "Minions & Monstros (sessão lotada)", "/hTowtXrkCY7FJyoj4p91JckrJSE.jpg",
+    ("1315772", "Minions & Monstros", "/hTowtXrkCY7FJyoj4p91JckrJSE.jpg",
      "Cinemark Shopping Metrô Tatuapé, São Paulo", 6, 16, "39.00", 40, Event.Status.PUBLISHED),
     # Rascunho: prova que a vitrine pública filtra por status.
-    ("1375646", "Zona Zero (ainda não publicado)", "/hWT5fHzVcxq06SuLfAWYVCrue7P.jpg",
+    ("1375646", "Zona Zero", "/hWT5fHzVcxq06SuLfAWYVCrue7P.jpg",
      "Cinesala, São Paulo", 30, 20, "35.00", 50, Event.Status.DRAFT),
 ]
 
+# Sinopses REAIS do TMDb, colhidas com a própria integração do projeto e
+# fixadas aqui pelo mesmo motivo dos cartazes: o seed roda no build da Render
+# e não pode depender de a API externa estar de pé.
+#
+# O texto genérico vira FALLBACK, para item que ainda não tenha sinopse — em
+# vez de ser o padrão para todo mundo, como era.
+SINOPSES = {
+    "969681": (
+        "É um novo dia para Peter Parker. Combatendo o crime em tempo integral "
+        "como Homem-Aranha em um mundo que não se lembra mais dele e lidando "
+        "com a pressão de ver seus antigos amigos seguirem em frente sem sua "
+        "presença, Peter passa por uma mudança que talvez nem ele tenha o poder "
+        "de controlar. Mas essa transformação também pode ser a única coisa "
+        "capaz de deter uma surpreendente nova ameaça à cidade e às pessoas que "
+        "ele ama: um poderoso vilão que ninguém sequer consegue enxergar."
+    ),
+    "1368337": (
+        "Acompanhe a saga de Odisseu, o lendário rei de Ítaca, em sua longa e "
+        "perigosa jornada de retorno ao lar após a Guerra de Troia. O relato "
+        "narra seus confrontos com seres míticos, como o ciclope Polifemo, as "
+        "sedutoras sereias e a ninfa Calipso, enquanto ele luta contra o "
+        "destino para se reencontrar com sua fiel esposa, Penélope."
+    ),
+    "1084244": (
+        "O trabalho de Buzz, Woody, Jessie e do resto da gangue fica "
+        "exponencialmente mais difícil quando eles enfrentam uma nova ameaça à "
+        "diversão: a tecnologia."
+    ),
+    "634649": (
+        "Peter Parker é desmascarado e não consegue mais separar sua vida "
+        "normal dos grandes riscos de ser um super-herói. Quando ele pede ajuda "
+        "ao Doutor Estranho, os riscos se tornam ainda mais perigosos, e o "
+        "forçam a descobrir o que realmente significa ser o Homem-Aranha..."
+    ),
+    "1081003": (
+        "Quando um adversário implacável atinge alguém muito próximo dela, Kara "
+        "Zor-El relutantemente une forças com uma companheira improvável em uma "
+        "épica jornada interestelar de vingança e justiça."
+    ),
+    "1212763": (
+        "Após a perda do marido, uma mulher busca consolo com seus sogros em "
+        "sua casa isolada. À medida que, um a um, eles são transformados em "
+        "Deadites — transformando o encontro em uma reunião familiar infernal "
+        "—, ela descobre que os votos que fez em vida... continuam vivos mesmo "
+        "após a morte."
+    ),
+    "1108427": (
+        "Na Polinésia Antiga, quando uma terrível maldição contraída por Maui "
+        "chega à ilha de um impetuoso chefe, sua filha obstinada responde ao "
+        "chamado do Oceano para procurar o semideus e consertar as coisas. "
+        "Adaptação live-action do filme de animação da Disney de 2016 'Moana'"
+    ),
+    "1284465": (
+        "Atormentado pelas cicatrizes de uma vida marcada pelo crime, Robin "
+        "Hood sobrevive por pouco àquela que acreditava ser sua batalha final. "
+        "Gravemente ferido, ele é encontrado por uma mulher misteriosa que o "
+        "recolhe das sombras e passa a cuidar de seus ferimentos. Com o corpo "
+        "fora de combate, cada erro cometido no passado volta para assombrá-lo."
+    ),
+    "1339713": (
+        "Sem grandes pretensões, um romântico incurável compra um brinquedo que "
+        "promete realizar desejos únicos. Ele quebra o artefato misterioso "
+        "enquanto pede para conquistar a crush e consegue exatamente o que "
+        "desejava, mas descobre que a consequência é sinistra."
+    ),
+    "1315772": (
+        "Esta é a frenética, ridícula e totalmente verdadeira história de como "
+        "os Minions conquistaram Hollywood, se tornaram estrelas de cinema, "
+        "perderam tudo, libertaram monstros pelo mundo e, depois, se uniram "
+        "para tentar salvar o planeta do caos que eles mesmos haviam acabado de "
+        "criar."
+    ),
+    "1375646": (
+        "De repente, um vírus que sofre mutações rápidas é liberado em uma "
+        "conferência de biologia, forçando o isolamento imediato do local. A "
+        "contaminação se espalha rapidamente, e os infectados não apenas "
+        "atacam, eles evoluem de formas imprevisíveis e cada vez mais "
+        "perigosas. Presos nesse confinamento, um grupo de sobreviventes "
+        "precisa lutar pela própria vida enquanto, a cada minuto, as regras do "
+        "jogo mudam."
+    ),
+    "1284041": (
+        "Uma família trancada misteriosamente na própria casa precisa se unir "
+        "para sobreviver à escassez de recursos e à força sombria que a mantém "
+        "presa."
+    ),
+}
+
 # Quantos ingressos já "vendidos" em cada evento, para a vitrine e o painel do
 # organizador não aparecerem zerados. Chave = external_id.
-VENDIDOS = {"969681": 47, "1084244": 112, "1081003": 8, "1315772": 40}
+VENDIDOS = {
+    "969681": 47,     # bom movimento
+    "1368337": 31,
+    "1084244": 112,   # quase esgotando
+    "634649": 9,      # acabou de entrar em cartaz
+    "1081003": 8,
+    "1212763": 55,
+    "1108427": 74,
+    "1284465": 12,
+    "1339713": 26,
+    "1315772": 40,    # esgotado (capacidade 40)
+}
 
 # Um evento de LUGAR MARCADO. Sem ele, o mapa de assentos só apareceria para
 # quem criasse um evento na mão — e quem for avaliar provavelmente não vai.
 EVENTO_COM_LUGAR = {
     "external_id": "1284041",
-    "title": "A Última Casa — sessão com lugar marcado",
+    "title": "A Última Casa",
     "cartaz": "/AqOwuZ4X0Ssi3LIsYqXNw52IIvW.jpg",
     "venue": "Teatro Municipal, São Paulo",
     "dias": 9,
@@ -100,6 +199,23 @@ OCUPADAS = [
     ("Plateia", "D", 9), ("Plateia", "E", 4), ("Plateia", "E", 12),
     ("Balcão", "F", 2), ("Balcão", "F", 3), ("Balcão", "G", 8),
 ]
+
+
+def descricao_de(external_id, titulo):
+    """
+    Sinopse real quando existe; texto genérico só como último recurso.
+
+    O template "Sessão especial de X" era o padrão para todos, e transformava
+    doze eventos diferentes em doze cópias do mesmo parágrafo — a página do
+    evento não dizia nada sobre o filme.
+    """
+    sinopse = SINOPSES.get(external_id)
+    if sinopse:
+        return sinopse
+    return (
+        f"Sessão especial de {titulo}, com entrada por ingresso digital. "
+        "Chegue com 30 minutos de antecedência; o QR é validado na portaria."
+    )
 
 
 class Command(BaseCommand):
@@ -159,10 +275,7 @@ class Command(BaseCommand):
             # apodrecendo em produção.
             apresentacao = {
                 "title": titulo,
-                "description": (
-                    f"Sessão especial de {titulo}, com entrada por ingresso digital. "
-                    "Chegue com 30 minutos de antecedência; o QR é validado na portaria."
-                ),
+                "description": descricao_de(ext_id, titulo),
                 "image_url": f"{CARTAZ}{cartaz}",
                 "venue": local,
                 "starts_at": quando,
@@ -234,10 +347,7 @@ class Command(BaseCommand):
             organizer=organizador,
             defaults={
                 "title": spec["title"],
-                "description": (
-                    "Sessão com lugar marcado. Escolha a poltrona no mapa; "
-                    "cada ingresso vale por um assento específico."
-                ),
+                "description": descricao_de(spec["external_id"], spec["title"]),
                 "image_url": f"{CARTAZ}{spec['cartaz']}",
                 "venue": spec["venue"],
                 "starts_at": quando,
