@@ -124,6 +124,36 @@ export type PayResponse = {
   tickets: Ticket[];
 };
 
+/** Painel de vendas do organizador. */
+export type Sale = {
+  id: number;
+  customer_name: string;
+  customer_email: string;
+  status: ReservationStatus;
+  quantity: number;
+  total_price: string;
+  created_at: string;
+  tickets_used: number;
+  tickets_total: number;
+  seats: string[];
+};
+
+export type SalesResponse = {
+  summary: {
+    event_id: number;
+    event_title: string;
+    capacity: number;
+    sold_count: number;
+    available: number;
+    /** String, não número: dinheiro nunca trafega como float. */
+    revenue: string;
+    paid_reservations: number;
+    tickets_issued: number;
+    tickets_used: number;
+  };
+  sales: Sale[];
+};
+
 export type GateResult = "VALID" | "INVALID" | "ALREADY_USED" | "WRONG_EVENT";
 
 export type GateResponse = {

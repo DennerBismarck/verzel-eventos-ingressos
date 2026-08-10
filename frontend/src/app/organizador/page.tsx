@@ -182,6 +182,14 @@ export default function OrganizadorPage() {
                 </div>
 
                 <div className="flex gap-2">
+                  <Link
+                    href={`/organizador/vendas/${ev.id}`}
+                    className="inline-flex h-8 items-center rounded border
+                      border-line-strong px-3 text-[13px] font-semibold text-ink
+                      hover:bg-canvas"
+                  >
+                    Vendas
+                  </Link>
                   {ev.status === "PUBLISHED" && (
                     <Link
                       href={`/eventos/${ev.id}`}
