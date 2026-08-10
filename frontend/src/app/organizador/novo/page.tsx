@@ -18,7 +18,7 @@ import { useState } from "react";
 import { Alert, Button, Field, Skeleton } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { CatalogItem, OrganizerEvent, Source } from "@/lib/types";
+import type { CatalogItem, EventKind, OrganizerEvent, Source } from "@/lib/types";
 
 const FONTES: { valor: Source; rotulo: string; dica: string }[] = [
   { valor: "TMDB", rotulo: "Filmes (TMDb)", dica: "Filmes em cartaz e catálogo completo" },
@@ -223,10 +223,16 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
   );
   const [price, setPrice] = useState("");
   const [capacity, setCapacity] = useState("");
+  const [kind, setKind] = useState<EventKind>("GA");
+  const [secoes, setSecoes] = useState<SecaoForm[]>([
+    { name: "Plateia", rows: 5, seats_per_row: 10, price: "80.00" },
+  ]);
   const [publicar, setPublicar] = useState(true);
   const [erros, setErros] = useState<Record<string, string>>({});
   const [geral, setGeral] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
+
+  const totalAssentos = secoes.reduce((s, x) => s + x.rows * x.seats_per_row, 0);
 
   async function salvar(e: React.FormEvent) {
     e.preventDefault();
@@ -234,6 +240,8 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
     setErros({});
     setGeral(null);
     try {
+      const comLugar = kind === "SEATED";
+
       const criado = await api<OrganizerEvent>("/api/organizer/events", {
         method: "POST",
         token,
@@ -247,12 +255,41 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
           // datetime-local devolve sem fuso; o Date converte usando o fuso do
           // navegador, e o toISOString manda em UTC — que é como o Django grava.
           starts_at: new Date(startsAt).toISOString(),
-          kind: "GA",
-          status: publicar ? "PUBLISHED" : "DRAFT",
-          price,
-          capacity: Number(capacity),
+          kind,
+          // Com lugar marcado o evento nasce em RASCUNHO mesmo que o
+          // organizador tenha pedido para publicar: publicar antes de existir
+          // mapa colocaria na vitrine um teatro sem poltrona nenhuma.
+          status: publicar && !comLugar ? "PUBLISHED" : "DRAFT",
+          // A capacidade de um evento com lugar marcado é derivada do mapa;
+          // mandar 0 aqui e deixar o gerador de assentos escrever o total.
+          price: comLugar ? "0.00" : price,
+          capacity: comLugar ? 0 : Number(capacity),
         }),
       });
+
+      if (comLugar) {
+        // Monta o mapa e só então publica, se era o pedido.
+        await api(`/api/organizer/events/${criado.id}/seats`, {
+          method: "POST",
+          token,
+          body: JSON.stringify({
+            sections: secoes.map((s) => ({
+              name: s.name,
+              rows: rotulosDeFila(s.rows),
+              seats_per_row: s.seats_per_row,
+              price: s.price,
+            })),
+          }),
+        });
+        if (publicar) {
+          await api(`/api/organizer/events/${criado.id}`, {
+            method: "PATCH",
+            token,
+            body: JSON.stringify({ status: "PUBLISHED" }),
+          });
+        }
+      }
+
       router.push(publicar ? `/eventos/${criado.id}` : "/organizador");
     } catch (err) {
       if (err instanceof ApiError && err.status === 400) {
@@ -324,31 +361,77 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
           hint="Precisa ser no futuro."
         />
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Preço do ingresso (R$)"
-            name="price"
-            type="number"
-            step="0.01"
-            min="0"
-            required
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            error={erros.price}
-            placeholder="42.00"
+        <fieldset>
+          <legend className="mb-2 text-sm font-medium text-ink">Como vende o ingresso?</legend>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(
+              [
+                { valor: "GA", titulo: "Pista", texto: "Vende quantidade; entra quem chegar" },
+                {
+                  valor: "SEATED",
+                  titulo: "Lugar marcado",
+                  texto: "Cada ingresso é uma poltrona específica",
+                },
+              ] as const
+            ).map((o) => (
+              <label
+                key={o.valor}
+                className={`flex cursor-pointer items-start gap-3 rounded border p-3
+                  ${
+                    kind === o.valor
+                      ? "border-brand bg-brand/4"
+                      : "border-line-strong bg-white hover:border-brand/40"
+                  }`}
+              >
+                <input
+                  type="radio"
+                  name="kind"
+                  checked={kind === o.valor}
+                  onChange={() => setKind(o.valor)}
+                  className="mt-0.5 accent-brand"
+                />
+                <span>
+                  <span className="block text-sm font-semibold text-ink">{o.titulo}</span>
+                  <span className="block text-xs text-muted">{o.texto}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        {kind === "GA" ? (
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field
+              label="Preço do ingresso (R$)"
+              name="price"
+              type="number"
+              step="0.01"
+              min="0"
+              required
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              error={erros.price}
+              placeholder="42.00"
+            />
+            <Field
+              label="Capacidade (lugares)"
+              name="capacity"
+              type="number"
+              min="1"
+              required
+              value={capacity}
+              onChange={(e) => setCapacity(e.target.value)}
+              error={erros.capacity}
+              placeholder="120"
+            />
+          </div>
+        ) : (
+          <MontadorDeMapa
+            secoes={secoes}
+            onMudar={setSecoes}
+            total={totalAssentos}
           />
-          <Field
-            label="Capacidade (lugares)"
-            name="capacity"
-            type="number"
-            min="1"
-            required
-            value={capacity}
-            onChange={(e) => setCapacity(e.target.value)}
-            error={erros.capacity}
-            placeholder="120"
-          />
-        </div>
+        )}
 
         <label className="flex items-start gap-3 rounded border border-line-strong bg-white p-3">
           <input
@@ -375,6 +458,140 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
           </Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+type SecaoForm = { name: string; rows: number; seats_per_row: number; price: string };
+
+/**
+ * Rótulos de fila: A, B, ... Z, AA, AB...
+ *
+ * O organizador informa QUANTAS filas; a nomeação é nossa. Pedir para digitar
+ * "A,B,C,D,E" seria trabalho manual com erro garantido em sala grande.
+ */
+function rotulosDeFila(quantidade: number): string[] {
+  const saida: string[] = [];
+  for (let i = 0; i < quantidade; i++) {
+    let n = i;
+    let rotulo = "";
+    do {
+      rotulo = String.fromCharCode(65 + (n % 26)) + rotulo;
+      n = Math.floor(n / 26) - 1;
+    } while (n >= 0);
+    saida.push(rotulo);
+  }
+  return saida;
+}
+
+function MontadorDeMapa({
+  secoes,
+  onMudar,
+  total,
+}: {
+  secoes: SecaoForm[];
+  onMudar: (s: SecaoForm[]) => void;
+  total: number;
+}) {
+  function atualizar(i: number, campo: keyof SecaoForm, valor: string | number) {
+    onMudar(secoes.map((s, idx) => (idx === i ? { ...s, [campo]: valor } : s)));
+  }
+
+  return (
+    <div className="rounded-card border border-line-strong bg-white p-4">
+      <div className="mb-3 flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold text-ink">Mapa de assentos</h2>
+        <span className="text-xs text-muted">
+          {total} {total === 1 ? "lugar" : "lugares"} no total
+        </span>
+      </div>
+
+      <div className="space-y-3">
+        {secoes.map((s, i) => (
+          <div key={i} className="rounded border border-line p-3">
+            <div className="grid gap-2 sm:grid-cols-[1fr_5rem_5rem_6rem]">
+              <label className="text-xs text-muted">
+                Seção
+                <input
+                  value={s.name}
+                  onChange={(e) => atualizar(i, "name", e.target.value)}
+                  className="mt-1 h-9 w-full rounded border border-line-strong px-2 text-sm text-ink"
+                />
+              </label>
+              <label className="text-xs text-muted">
+                Filas
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={s.rows}
+                  onChange={(e) => atualizar(i, "rows", Math.max(1, Number(e.target.value)))}
+                  className="mt-1 h-9 w-full rounded border border-line-strong px-2 text-sm text-ink"
+                />
+              </label>
+              <label className="text-xs text-muted">
+                Por fila
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={s.seats_per_row}
+                  onChange={(e) =>
+                    atualizar(i, "seats_per_row", Math.max(1, Number(e.target.value)))
+                  }
+                  className="mt-1 h-9 w-full rounded border border-line-strong px-2 text-sm text-ink"
+                />
+              </label>
+              <label className="text-xs text-muted">
+                Preço (R$)
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={s.price}
+                  onChange={(e) => atualizar(i, "price", e.target.value)}
+                  className="mt-1 h-9 w-full rounded border border-line-strong px-2 text-sm text-ink"
+                />
+              </label>
+            </div>
+
+            <div className="mt-2 flex items-center justify-between">
+              <p className="text-xs text-muted">
+                Filas {rotulosDeFila(s.rows)[0]} a {rotulosDeFila(s.rows).at(-1)} ·{" "}
+                {s.rows * s.seats_per_row} lugares
+              </p>
+              {secoes.length > 1 && (
+                <button
+                  type="button"
+                  onClick={() => onMudar(secoes.filter((_, idx) => idx !== i))}
+                  className="text-xs font-semibold text-danger hover:underline"
+                >
+                  Remover seção
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        className="mt-3"
+        onClick={() =>
+          onMudar([
+            ...secoes,
+            { name: `Seção ${secoes.length + 1}`, rows: 3, seats_per_row: 8, price: "50.00" },
+          ])
+        }
+      >
+        Adicionar seção
+      </Button>
+
+      <p className="mt-3 text-xs text-muted">
+        O mapa só pode ser refeito enquanto nenhum lugar tiver sido vendido.
+      </p>
     </div>
   );
 }

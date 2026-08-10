@@ -53,6 +53,25 @@ export type CatalogItem = {
   starts_at: string | null;
 };
 
+export type SeatStatus = "AVAILABLE" | "SOLD";
+
+export type Seat = {
+  id: number;
+  section: string;
+  row: string;
+  number: number;
+  price: string;
+  status: SeatStatus;
+};
+
+/** Entrada do gerador de mapa (só o organizador manda isto). */
+export type SeatSection = {
+  name: string;
+  rows: string[];
+  seats_per_row: number;
+  price: string;
+};
+
 export type TicketStatus = "VALID" | "USED";
 
 export type Ticket = {

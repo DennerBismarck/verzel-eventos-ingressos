@@ -12,22 +12,30 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { SeatMap } from "@/components/seat-map";
 import { Alert, Badge, Button, Skeleton } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { fullDate, money } from "@/lib/format";
-import type { PayResponse, PublicEvent, Reservation } from "@/lib/types";
+import type { PayResponse, PublicEvent, Reservation, Seat } from "@/lib/types";
 
 const MAX_POR_COMPRA = 8;
 
 export default function EventoPage() {
   const { id } = useParams<{ id: string }>();
   const [evento, setEvento] = useState<PublicEvent | null>(null);
+  const [assentos, setAssentos] = useState<Seat[]>([]);
+  const [escolhidos, setEscolhidos] = useState<Set<number>>(new Set());
   const [erro, setErro] = useState<string | null>(null);
 
   const carregar = useCallback(async () => {
     try {
-      setEvento(await api<PublicEvent>(`/api/events/${id}`));
+      const e = await api<PublicEvent>(`/api/events/${id}`);
+      setEvento(e);
+      if (e.kind === "SEATED") {
+        // Rota separada e sem paginação: o mapa é desenhado inteiro.
+        setAssentos(await api<Seat[]>(`/api/events/${id}/seats`));
+      }
     } catch (e) {
       setErro(
         e instanceof ApiError && e.status === 404
@@ -36,6 +44,15 @@ export default function EventoPage() {
       );
     }
   }, [id]);
+
+  function alternarAssento(assento: Seat) {
+    setEscolhidos((atual) => {
+      const proximo = new Set(atual);
+      if (proximo.has(assento.id)) proximo.delete(assento.id);
+      else proximo.add(assento.id);
+      return proximo;
+    });
+  }
 
   useEffect(() => {
     void carregar();
@@ -123,11 +140,35 @@ export default function EventoPage() {
               </p>
             </div>
           )}
+
+          {evento.kind === "SEATED" && (
+            <div className="mt-8 rounded-card border border-line bg-white p-4 sm:p-6">
+              <h2 className="mb-4 text-base font-semibold text-ink">Escolha seus lugares</h2>
+              {assentos.length === 0 ? (
+                <Alert tone="warn" title="Mapa ainda não publicado">
+                  O organizador ainda não montou o mapa de assentos deste evento.
+                </Alert>
+              ) : (
+                <SeatMap
+                  seats={assentos}
+                  selecionados={escolhidos}
+                  onAlternar={alternarAssento}
+                  limite={MAX_POR_COMPRA}
+                />
+              )}
+            </div>
+          )}
         </div>
 
         <div className="lg:row-span-2">
           <div className="lg:sticky lg:top-20">
-            <PainelCompra evento={evento} aoComprar={carregar} />
+            <PainelCompra
+              evento={evento}
+              assentos={assentos}
+              escolhidos={escolhidos}
+              aoLimparEscolha={() => setEscolhidos(new Set())}
+              aoComprar={carregar}
+            />
           </div>
         </div>
       </div>
@@ -148,9 +189,15 @@ type Etapa = "escolha" | "confirmar" | "pago" | "recusado";
 
 function PainelCompra({
   evento,
+  assentos,
+  escolhidos,
+  aoLimparEscolha,
   aoComprar,
 }: {
   evento: PublicEvent;
+  assentos: Seat[];
+  escolhidos: Set<number>;
+  aoLimparEscolha: () => void;
   aoComprar: () => Promise<void>;
 }) {
   const { user, token, ready } = useAuth();
@@ -163,8 +210,17 @@ function PainelCompra({
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState(false);
 
+  const comLugarMarcado = evento.kind === "SEATED";
   const maximo = Math.min(MAX_POR_COMPRA, evento.available);
   const esgotado = evento.available <= 0;
+
+  const selecionados = assentos.filter((a) => escolhidos.has(a.id));
+  // Em lugar marcado o preço vem de cada poltrona (seções custam diferente);
+  // na pista, do preço único do evento.
+  const total = comLugarMarcado
+    ? selecionados.reduce((soma, a) => soma + Number(a.price), 0)
+    : Number(evento.price) * qtd;
+  const podeReservar = comLugarMarcado ? selecionados.length > 0 : !esgotado;
 
   async function reservar() {
     if (!user) {
@@ -178,12 +234,19 @@ function PainelCompra({
       const r = await api<Reservation>("/api/reservations", {
         method: "POST",
         token,
-        body: JSON.stringify({ event: evento.id, quantity: qtd }),
+        body: JSON.stringify(
+          comLugarMarcado
+            ? { event: evento.id, seats: [...escolhidos] }
+            : { event: evento.id, quantity: qtd },
+        ),
       });
       setReserva(r);
       setEtapa("confirmar");
     } catch (e) {
       setErro(mensagemDeErro(e));
+      // Recarrega o mapa: o motivo mais comum de falha aqui é alguém ter
+      // levado a poltrona no intervalo entre carregar a tela e clicar.
+      aoLimparEscolha();
       await aoComprar();
     } finally {
       setOcupado(false);
@@ -224,6 +287,7 @@ function PainelCompra({
       await api(`/api/reservations/${reserva.id}/cancel`, { method: "POST", token });
       setReserva(null);
       setEtapa("escolha");
+      aoLimparEscolha();
     } catch (e) {
       setErro(mensagemDeErro(e));
     } finally {
@@ -232,21 +296,80 @@ function PainelCompra({
     }
   }
 
-  const total = Number(evento.price) * qtd;
-
   return (
     <aside className="rounded-card border border-line bg-white p-5">
       {etapa === "escolha" && (
         <>
           <div className="mb-4 flex items-baseline justify-between border-b border-line pb-4">
-            <span className="text-sm text-muted">Ingresso</span>
-            <strong className="text-xl font-bold text-ink">{money(evento.price)}</strong>
+            <span className="text-sm text-muted">
+              {comLugarMarcado ? "Lugar marcado" : "Ingresso"}
+            </span>
+            {!comLugarMarcado && (
+              <strong className="text-xl font-bold text-ink">{money(evento.price)}</strong>
+            )}
           </div>
 
           {esgotado ? (
             <Alert tone="warn" title="Esgotado">
               Não há mais ingressos disponíveis para este evento.
             </Alert>
+          ) : comLugarMarcado ? (
+            <>
+              <div className="mb-4">
+                <span className="mb-2 block text-sm font-medium text-ink">
+                  Selecionados
+                </span>
+                {selecionados.length === 0 ? (
+                  <p className="text-sm text-muted">
+                    Escolha as poltronas no mapa ao lado.
+                  </p>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {selecionados.map((a) => (
+                      <li
+                        key={a.id}
+                        className="flex items-center justify-between gap-2 text-sm"
+                      >
+                        <span className="text-body">
+                          {a.section} · {a.row}
+                          {a.number}
+                        </span>
+                        <span className="font-medium text-ink">{money(a.price)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="mb-4 flex items-baseline justify-between border-t border-line pt-4">
+                <span className="text-sm font-medium text-ink">Total</span>
+                <strong className="text-xl font-bold text-ink">{money(total)}</strong>
+              </div>
+
+              <Button
+                size="lg"
+                className="w-full"
+                loading={ocupado}
+                disabled={!ready || !podeReservar}
+                onClick={() => void reservar()}
+              >
+                {!user
+                  ? "Entrar para comprar"
+                  : selecionados.length === 0
+                    ? "Selecione um lugar"
+                    : `Reservar ${selecionados.length} lugar${selecionados.length > 1 ? "es" : ""}`}
+              </Button>
+
+              {selecionados.length > 0 && (
+                <Button variant="ghost" className="mt-2 w-full" onClick={aoLimparEscolha}>
+                  Limpar seleção
+                </Button>
+              )}
+
+              <p className="mt-3 text-center text-xs text-muted">
+                A reserva segura seus lugares antes do pagamento.
+              </p>
+            </>
           ) : (
             <>
               <div className="mb-4">
