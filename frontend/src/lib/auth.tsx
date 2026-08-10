@@ -1,13 +1,14 @@
 "use client";
 
 /**
- * Sessão do usuário no navegador.
+ * Ponte entre a sessão (que vive em session.ts, fora do React) e a interface.
  *
  * O token fica em localStorage. É a escolha pragmática para uma SPA que fala
  * com uma API em OUTRO domínio (Vercel -> Render): cookie HttpOnly cross-site
  * exigiria SameSite=None + domínio compartilhado, o que este deploy não tem.
  * O custo é assumido e conhecido: localStorage é legível por JavaScript, então
- * um XSS levaria o token junto. A mitigação é o access token ser curto (60 min).
+ * um XSS levaria o token junto. A mitigação é o access token ser curto (60 min)
+ * e a renovação acontecer sozinha, sem prender o usuário a uma sessão longa.
  *
  * E o mais importante: nada aqui AUTORIZA nada. Esconder um link é conveniência
  * de navegação — quem decide quem pode o quê é a permission class do Django.
@@ -19,15 +20,21 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
 import { api } from "./api";
+import {
+  assinar,
+  carregarSessao,
+  gravarSessao,
+  lerSessao,
+  lerSessaoDoServidor,
+  limparSessao,
+  sessaoCarregada,
+} from "./session";
 import type { LoginResponse, Role, User } from "./types";
-
-const CHAVE_TOKEN = "ingressos.access";
-const CHAVE_USER = "ingressos.user";
 
 type AuthContextValue = {
   user: User | null;
@@ -47,46 +54,27 @@ type AuthContextValue = {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [ready, setReady] = useState(false);
+  // useSyncExternalStore é a forma correta de observar estado que mora fora do
+  // React. O terceiro argumento é o instantâneo do servidor — sempre null,
+  // porque lá não existe localStorage. É o que mantém servidor e cliente
+  // idênticos no primeiro render e não quebra a hidratação.
+  const sessao = useSyncExternalStore(assinar, lerSessao, lerSessaoDoServidor);
+  const carregada = useSyncExternalStore(assinar, sessaoCarregada, () => false);
 
-  // localStorage não existe no servidor: só depois da hidratação.
+  // Só depois de hidratar: localStorage não existe no servidor.
   useEffect(() => {
-    try {
-      const t = localStorage.getItem(CHAVE_TOKEN);
-      const u = localStorage.getItem(CHAVE_USER);
-      if (t && u) {
-        setToken(t);
-        setUser(JSON.parse(u) as User);
-      }
-    } catch {
-      // localStorage bloqueado (modo privado, permissões): segue deslogado.
-    }
-    setReady(true);
-  }, []);
-
-  const guardar = useCallback((resposta: LoginResponse) => {
-    setToken(resposta.access);
-    setUser(resposta.user);
-    try {
-      localStorage.setItem(CHAVE_TOKEN, resposta.access);
-      localStorage.setItem(CHAVE_USER, JSON.stringify(resposta.user));
-    } catch {
-      /* sessão só em memória */
-    }
-    return resposta.user;
+    carregarSessao();
   }, []);
 
   const login = useCallback(
     async (email: string, password: string) =>
-      guardar(
+      gravarSessao(
         await api<LoginResponse>("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({ email, password }),
         }),
       ),
-    [guardar],
+    [],
   );
 
   const register = useCallback(
@@ -96,30 +84,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(dados),
       });
       // Cadastrou, já entra: evita mandar o usuário para o login logo depois.
-      return guardar(
+      return gravarSessao(
         await api<LoginResponse>("/api/auth/login", {
           method: "POST",
           body: JSON.stringify({ email: dados.email, password: dados.password }),
         }),
       );
     },
-    [guardar],
+    [],
   );
 
-  const logout = useCallback(() => {
-    setToken(null);
-    setUser(null);
-    try {
-      localStorage.removeItem(CHAVE_TOKEN);
-      localStorage.removeItem(CHAVE_USER);
-    } catch {
-      /* nada a limpar */
-    }
-  }, []);
-
   const value = useMemo(
-    () => ({ user, token, ready, login, register, logout }),
-    [user, token, ready, login, register, logout],
+    () => ({
+      user: sessao?.user ?? null,
+      token: sessao?.access ?? null,
+      ready: carregada,
+      login,
+      register,
+      logout: limparSessao,
+    }),
+    [sessao, carregada, login, register],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
