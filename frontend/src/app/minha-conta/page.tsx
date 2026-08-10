@@ -107,10 +107,17 @@ export default function MinhaContaPage() {
       )}
 
       {validos.length > 0 && (
-        <section className="mt-6 space-y-3">
-          {validos.map((t) => (
-            <TicketStub key={t.id} ticket={t} onAbrir={() => setAberto(t)} />
-          ))}
+        <section className="mt-6">
+          {/* Simétrico com "Já utilizados". Sem este título, o primeiro bloco
+              parecia a lista inteira e o segundo, um apêndice. */}
+          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted">
+            Válidos
+          </h2>
+          <div className="space-y-3">
+            {validos.map((t) => (
+              <TicketStub key={t.id} ticket={t} onAbrir={() => setAberto(t)} />
+            ))}
+          </div>
         </section>
       )}
 
@@ -146,8 +153,23 @@ export default function MinhaContaPage() {
               <tbody>
                 {reservas.map((r) => (
                   <tr key={r.id} className="border-b border-line last:border-0">
-                    <td className="px-4 py-3 font-medium text-ink">{r.event_title}</td>
-                    <td className="px-4 py-3 text-muted">{shortDate(r.created_at)}</td>
+                    <td className="px-4 py-3">
+                      <span className="block font-medium text-ink">{r.event_title}</span>
+                      {/* Liga a reserva aos ingressos que ela gerou: "comprei 2"
+                          deixa de ser um número solto e vira F1 e F8. */}
+                      {r.tickets.length > 0 && (
+                        <span className="mt-0.5 block text-xs text-muted">
+                          {r.tickets
+                            .map((t) => t.seat_label ?? t.short_code)
+                            .join(", ")}
+                        </span>
+                      )}
+                    </td>
+                    {/* Mesmo formato dos cards acima. Ter dd/mm aqui e data por
+                        extenso ali fazia a mesma informação parecer duas. */}
+                    <td className="px-4 py-3 text-muted first-letter:uppercase">
+                      {fullDate(r.created_at)}
+                    </td>
                     <td className="px-4 py-3 text-center">{r.quantity}</td>
                     <td className="px-4 py-3 text-right font-medium text-ink">
                       {money(r.total_price)}
@@ -188,7 +210,13 @@ function TicketStub({ ticket, onAbrir }: { ticket: Ticket; onAbrir: () => void }
 
       <div className="flex min-w-0 flex-1 flex-col gap-1 p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="truncate font-semibold text-ink">{ticket.event_title}</h3>
+          <h3 className="truncate font-semibold text-ink">
+            {/* Link para a página do evento: de onde se vê data, local e mapa.
+                Sem ele, o ingresso era um beco sem saída. */}
+            <Link href={`/eventos/${ticket.event}`} className="hover:text-brand hover:underline">
+              {ticket.event_title}
+            </Link>
+          </h3>
           {usado ? <Badge tone="neutral">Utilizado</Badge> : <Badge tone="ok">Válido</Badge>}
         </div>
         <p className="text-sm text-muted">{ticket.venue}</p>
@@ -217,13 +245,16 @@ function TicketStub({ ticket, onAbrir }: { ticket: Ticket; onAbrir: () => void }
         />
       </div>
 
+      {/* QR grande no ingresso válido — é o que a pessoa vai apresentar. No
+          usado ele encolhe: continua sendo comprovante, mas já não serve para
+          entrar, e ocupar o mesmo destaque confundiria a leitura da lista. */}
       <button
         onClick={onAbrir}
-        className="flex w-28 shrink-0 flex-col items-center justify-center gap-1.5
-          p-3 text-center hover:bg-canvas sm:w-32"
+        className={`flex shrink-0 flex-col items-center justify-center gap-1.5
+          p-3 text-center hover:bg-canvas ${usado ? "w-24" : "w-32 sm:w-40"}`}
       >
         <span className="rounded border border-line bg-white p-1">
-          <QRCodeSVG value={ticket.qr_payload} size={56} level="M" />
+          <QRCodeSVG value={ticket.qr_payload} size={usado ? 44 : 96} level="M" />
         </span>
         <span className="text-[11px] font-semibold text-brand">Ampliar</span>
       </button>
