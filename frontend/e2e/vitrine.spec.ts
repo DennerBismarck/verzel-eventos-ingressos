@@ -16,6 +16,11 @@ test.describe("vitrine", () => {
 
   test("busca filtra por título", async ({ page }) => {
     await page.goto("/");
+    // Espera a vitrine montar antes de digitar. `fill` escreve no DOM e
+    // dispara o evento; se o React ainda não hidratou, ninguém escuta, o
+    // estado do campo continua vazio e o submit navega para "/" sem o ?q=.
+    await expect(page.locator("article").first()).toBeVisible();
+
     await page.getByPlaceholder(/Busque por evento/).first().fill("moana");
     await page.getByRole("search").getByRole("button", { name: "Buscar" }).click();
     await expect(page).toHaveURL(/\?q=moana/);
@@ -71,6 +76,44 @@ test.describe("vitrine", () => {
     await expect(page.getByText("Quando")).toBeVisible();
     await expect(page.getByText("Onde")).toBeVisible();
     await expect(page.getByText("Organização")).toBeVisible();
+  });
+
+  test("página do evento oferece outros horários, o mapa e o que mais está em cartaz", async ({
+    page,
+  }) => {
+    await page.goto("/?q=Um Novo Dia");
+    await page.locator("article").first().getByRole("link").click();
+    await expect(page).toHaveURL(/\/eventos\/\d+/);
+
+    // Outras sessões do MESMO filme ficam ao lado da compra, não lá embaixo:
+    // é ali que a pergunta nasce para quem viu um horário ruim.
+    const horarios = page.getByRole("heading", { name: "Outros horários deste filme" });
+    await expect(horarios).toBeVisible();
+
+    await expect(page.getByRole("heading", { name: "Como chegar" })).toBeVisible();
+    // Link para o mapa, e não iframe: nada de script de terceiro carregando
+    // para quem só queria ver o preço.
+    const mapa = page.getByRole("link", { name: "Ver no mapa" });
+    await expect(mapa).toHaveAttribute("href", /google\.com\/maps/);
+    await expect(mapa).toHaveAttribute("rel", /noopener/);
+
+    await expect(page.getByRole("heading", { name: "Também em cartaz" })).toBeVisible();
+
+    // A sugestão leva a OUTRO evento, não de volta para este.
+    //
+    // Compara com o DESTINO do link, e não com page.url() depois do clique:
+    // já estávamos numa URL /eventos/N, então toHaveURL(/\/eventos\/\d+/)
+    // passa na hora e page.url() é lido antes de a navegação terminar.
+    const outra = page
+      .locator("section")
+      .filter({ has: horarios })
+      .getByRole("link")
+      .first();
+    const destino = await outra.getAttribute("href");
+    expect(destino).not.toBe(new URL(page.url()).pathname);
+
+    await outra.click();
+    await expect(page).toHaveURL(new RegExp(`${destino}$`));
   });
 
   test("evento inexistente explica em vez de quebrar", async ({ page }) => {

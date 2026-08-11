@@ -39,6 +39,18 @@ export type PublicEvent = {
   source: Source;
 };
 
+/**
+ * O que preenche a metade de baixo da página do evento.
+ *
+ * `same_title` são outras sessões do MESMO item do catálogo — o mesmo filme
+ * em outro horário ou outro cinema. É a sugestão mais forte que existe aqui:
+ * quem chegou numa sessão esgotada quase sempre quer essa.
+ */
+export type RelatedEvents = {
+  same_title: PublicEvent[];
+  others: PublicEvent[];
+};
+
 /** O que o organizador recebe — inclui rascunho e estoque. */
 export type OrganizerEvent = PublicEvent & {
   external_id: string;

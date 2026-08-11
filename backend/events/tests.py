@@ -7,20 +7,24 @@ cota a cada execução e não roda no CI sem chave — deixa de ser teste e vira
 monitoramento.
 """
 
+import threading
+import time
 from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 import requests
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import override_settings
+from django.test import TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .catalog import CatalogError, get_provider
+from .catalog.base import CatalogItem, CatalogProvider
 from .models import Event
 
 User = get_user_model()
@@ -674,3 +678,264 @@ class FiltroDoPainelTest(APITestCase):
     def test_filtro_nao_atravessa_organizador(self):
         criar_evento(self.outro, external_id="9", title="Alheio", starts_at=daqui(1))
         self.assertNotIn("Alheio", self.titulos(when="upcoming"))
+
+
+class RelacionadosTest(APITestCase):
+    """
+    O bloco que preenche a metade de baixo da página do evento.
+
+    Duas listas: outras sessões do MESMO item do catálogo, e o que mais está
+    em cartaz.
+    """
+
+    def setUp(self):
+        self.org = User.objects.create_user(
+            email="org@b.dev", password=SENHA, full_name="Org", role=User.Role.ORGANIZER
+        )
+        self.duna = criar_evento(
+            self.org, external_id="500", title="Duna", starts_at=daqui(5)
+        )
+        self.url = reverse("event-related", args=[self.duna.pk])
+
+    def corpo(self, evento=None):
+        return self.client.get(
+            reverse("event-related", args=[(evento or self.duna).pk])
+        ).json()
+
+    def test_outra_sessao_do_mesmo_filme_vem_separada(self):
+        criar_evento(
+            self.org, external_id="500", title="Duna", venue="Outro cine",
+            starts_at=daqui(9),
+        )
+        criar_evento(self.org, external_id="900", title="Outro filme", starts_at=daqui(7))
+
+        dados = self.corpo()
+        self.assertEqual([e["venue"] for e in dados["same_title"]], ["Outro cine"])
+        self.assertEqual([e["title"] for e in dados["others"]], ["Outro filme"])
+
+    def test_o_proprio_evento_nunca_se_sugere(self):
+        self.assertEqual(self.corpo()["same_title"], [])
+        self.assertEqual(self.corpo()["others"], [])
+
+    def test_rascunho_e_sessao_encerrada_ficam_de_fora(self):
+        criar_evento(
+            self.org, external_id="500", title="Duna", venue="Rascunho",
+            starts_at=daqui(3), status=Event.Status.DRAFT,
+        )
+        criar_evento(
+            self.org, external_id="500", title="Duna", venue="Ontem", starts_at=daqui(-1)
+        )
+        criar_evento(
+            self.org, external_id="901", title="Outro rascunho", starts_at=daqui(2),
+            status=Event.Status.DRAFT,
+        )
+
+        dados = self.corpo()
+        self.assertEqual(dados["same_title"], [])
+        self.assertEqual(dados["others"], [])
+
+    def test_sessao_sobrando_do_mesmo_filme_nao_reaparece_como_outro_evento(self):
+        """
+        O corte é de 6. Com 8 sessões do mesmo filme, as 2 que sobram não
+        podem voltar na lista de baixo como se fossem outro evento — por isso
+        o exclude é por (source, external_id), e não pelos ids já colhidos.
+        """
+        for i in range(8):
+            criar_evento(
+                self.org, external_id="500", title="Duna",
+                venue=f"Sala {i}", starts_at=daqui(10 + i),
+            )
+
+        dados = self.corpo()
+        self.assertEqual(len(dados["same_title"]), 6)
+        self.assertEqual(dados["others"], [])
+
+    def test_sessao_encerrada_ainda_recebe_sugestao(self):
+        """
+        A página de uma sessão que já passou continua de pé para quem esteve
+        lá — e é justamente onde sugerir o que está em cartaz vale mais.
+        """
+        passado = criar_evento(
+            self.org, external_id="700", title="Passado", starts_at=daqui(-2)
+        )
+        dados = self.corpo(passado)
+        self.assertEqual([e["title"] for e in dados["others"]], ["Duna"])
+
+    def test_rota_e_publica_e_evento_inexistente_da_404(self):
+        self.assertEqual(self.client.get(self.url).status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            self.client.get(reverse("event-related", args=[999999])).status_code,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+    def test_nao_dispara_uma_query_por_evento_sugerido(self):
+        """
+        A lista mostra preço "a partir de", que em lugar marcado mora nas
+        poltronas. Sem a anotação, cada card custaria uma query própria.
+        """
+        from django.test.utils import CaptureQueriesContext
+        from django.db import connection
+
+        for i in range(6):
+            criar_evento(self.org, external_id=f"8{i}", title=f"E{i}", starts_at=daqui(4))
+
+        with CaptureQueriesContext(connection) as poucos:
+            self.client.get(self.url)
+
+        for i in range(6):
+            criar_evento(self.org, external_id=f"9{i}", title=f"F{i}", starts_at=daqui(4))
+
+        with CaptureQueriesContext(connection) as muitos:
+            self.client.get(self.url)
+
+        self.assertEqual(len(poucos), len(muitos))
+
+
+class CacheDoCatalogoTest(TransactionTestCase):
+    """
+    "Serve primeiro, atualiza depois" — o cache que não faz ninguém esperar.
+
+    TransactionTestCase, e não TestCase, pelo mesmo motivo dos testes de
+    concorrência do ticketing: a renovação roda numa THREAD, com conexão
+    própria. O TestCase envolve o teste numa transação que nunca commita, então
+    a thread não enxergaria a linha gravada aqui — e, pior, ficaria BLOQUEADA
+    tentando inserir a mesma chave primária até o teste acabar.
+
+    Antes: TTL de 15 min e, ao expirar, o próximo usuário PAGAVA a ida ao
+    TMDb (1 a 3 segundos olhando um esqueleto) para receber exatamente a mesma
+    lista de antes.
+    """
+
+    def setUp(self):
+        cache.clear()
+        self.provider = get_provider("TMDB")
+
+    def tearDown(self):
+        cache.clear()
+
+    def _chamadas(self, retorno=None):
+        """Um dublê que conta quantas vezes a API externa foi chamada."""
+        chamadas = []
+
+        def falso(query, limit):
+            chamadas.append(query)
+            return retorno if retorno is not None else [
+                CatalogItem(source="TMDB", external_id="1", title=f"Filme {len(chamadas)}")
+            ]
+
+        return chamadas, falso
+
+    def test_copia_fresca_nao_toca_na_api(self):
+        chamadas, falso = self._chamadas()
+        with patch.object(self.provider, "_buscar_na_api", falso), override_settings(
+            TMDB_API_KEY="x"
+        ):
+            self.provider.search("duna")
+            self.provider.search("duna")
+            self.provider.search("duna")
+
+        self.assertEqual(len(chamadas), 1)
+
+    def test_copia_velha_e_servida_na_hora_e_renovada_depois(self):
+        """
+        A propriedade que importa: quem chega com a cópia vencida NÃO espera
+        pela API externa. Recebe o que está guardado e a renovação acontece
+        atrás.
+        """
+        chamadas, falso = self._chamadas()
+        with patch.object(self.provider, "_buscar_na_api", falso), override_settings(
+            TMDB_API_KEY="x"
+        ):
+            primeiro = self.provider.search("duna")
+
+            # Envelhece a cópia à mão, em vez de esperar seis horas.
+            chave = self.chave
+            itens, _ = cache.get(chave)
+            cache.set(chave, (itens, time.time() - CatalogProvider.FRESCOR - 1), 600)
+
+            servido = self.provider.search("duna")
+            # Devolveu a cópia ANTIGA, não o resultado da renovação.
+            self.assertEqual(servido[0].title, primeiro[0].title)
+
+            # A renovação roda numa thread; espera ela terminar.
+            for t in threading.enumerate():
+                if t.name == "catalogo-renova":
+                    t.join(timeout=5)
+
+        self.assertEqual(len(chamadas), 2)
+        self.assertEqual(cache.get(chave)[0][0].title, "Filme 2")
+
+    def test_falha_na_renovacao_nao_derruba_o_catalogo(self):
+        """
+        Melhor a lista de ontem do que uma tela de erro. Se a renovação falhar,
+        a cópia guardada continua sendo servida.
+        """
+        chamadas, falso = self._chamadas()
+        with patch.object(self.provider, "_buscar_na_api", falso), override_settings(
+            TMDB_API_KEY="x"
+        ):
+            self.provider.search("duna")
+            chave = self.chave
+            itens, _ = cache.get(chave)
+            cache.set(chave, (itens, time.time() - CatalogProvider.FRESCOR - 1), 600)
+
+            def explode(query, limit):
+                raise CatalogError("TMDb fora do ar")
+
+            with patch.object(self.provider, "_buscar_na_api", explode):
+                servido = self.provider.search("duna")
+                for t in threading.enumerate():
+                    if t.name == "catalogo-renova":
+                        t.join(timeout=5)
+
+        self.assertEqual(servido[0].title, "Filme 1")
+        self.assertEqual(cache.get(chave)[0][0].title, "Filme 1")
+
+    def test_uma_renovacao_so_mesmo_com_varios_pedidos(self):
+        """
+        Debandada de cache: com a cópia vencida e dez pedidos chegando juntos,
+        um dispara a renovação e os outros nove seguem servindo o guardado.
+        Sem a trava, os dez iriam ao TMDb ao mesmo tempo — e é justamente aí
+        que a cota de API estoura.
+        """
+        chamadas = []
+        # A renovação fica PRESA até o teste liberar. Sem isso ela terminaria
+        # no meio do laço, o cache voltaria a ficar fresco e a contagem viraria
+        # uma corrida — teste que às vezes dá 2 e às vezes 3 não afirma nada.
+        liberar = threading.Event()
+
+        def falso(query, limit):
+            chamadas.append(query)
+            if len(chamadas) > 1:
+                liberar.wait(timeout=5)
+            return [CatalogItem(source="TMDB", external_id="1", title=f"Filme {len(chamadas)}")]
+
+        with patch.object(self.provider, "_buscar_na_api", falso), override_settings(
+            TMDB_API_KEY="x"
+        ):
+            self.provider.search("duna")
+            chave = self.chave
+            itens, _ = cache.get(chave)
+            cache.set(chave, (itens, time.time() - CatalogProvider.FRESCOR - 1), 600)
+
+            # A trava é criada de forma SÍNCRONA, antes de a thread começar —
+            # é o que garante que o segundo pedido já a encontre no lugar.
+            for _ in range(10):
+                self.provider.search("duna")
+
+            liberar.set()
+            for t in threading.enumerate():
+                if t.name == "catalogo-renova":
+                    t.join(timeout=5)
+
+        # 1 da carga inicial + 1 renovação. Nunca 11.
+        self.assertEqual(len(chamadas), 2)
+
+    @property
+    def chave(self):
+        """
+        Espelha o formato montado pelo provedor. Repetir aqui é proposital:
+        se alguém mudar a chave sem pensar, estes testes caem — e cair é o
+        aviso de que TODA cópia em produção virou lixo no mesmo instante.
+        """
+        return f"catalog:v2:tmdb:{settings.TMDB_LANGUAGE}:duna:12"

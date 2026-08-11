@@ -6,6 +6,7 @@ from .views import (
     OrganizerEventViewSet,
     PublicEventDetailView,
     PublicEventListView,
+    PublicEventRelatedView,
     PublicEventSeatsView,
 )
 
@@ -23,6 +24,7 @@ urlpatterns = [
     path("events", PublicEventListView.as_view(), name="event-list"),
     path("events/<int:pk>", PublicEventDetailView.as_view(), name="event-detail"),
     path("events/<int:pk>/seats", PublicEventSeatsView.as_view(), name="event-seats"),
+    path("events/<int:pk>/related", PublicEventRelatedView.as_view(), name="event-related"),
     path("catalog/search", CatalogSearchView.as_view(), name="catalog-search"),
     path("", include(router.urls)),
 ]

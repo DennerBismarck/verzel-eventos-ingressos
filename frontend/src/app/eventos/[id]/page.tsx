@@ -12,12 +12,19 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
+import { EventCard } from "@/components/event-card";
 import { SeatMap } from "@/components/seat-map";
 import { Alert, Badge, Button, ContagemRegressiva, Skeleton } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { fullDate, money, preco } from "@/lib/format";
-import type { PayResponse, PublicEvent, Reservation, Seat } from "@/lib/types";
+import { dateParts, fullDate, money, preco } from "@/lib/format";
+import type {
+  PayResponse,
+  PublicEvent,
+  RelatedEvents,
+  Reservation,
+  Seat,
+} from "@/lib/types";
 
 const MAX_POR_COMPRA = 8;
 
@@ -25,8 +32,15 @@ export default function EventoPage() {
   const { id } = useParams<{ id: string }>();
   const [evento, setEvento] = useState<PublicEvent | null>(null);
   const [assentos, setAssentos] = useState<Seat[]>([]);
+  const [relacionados, setRelacionados] = useState<RelatedEvents | null>(null);
   const [escolhidos, setEscolhidos] = useState<Set<number>>(new Set());
   const [erro, setErro] = useState<string | null>(null);
+
+  // O relógio é lido UMA vez, na montagem, e não a cada render. Ler Date.now()
+  // durante o render torna o componente impuro: duas renderizações com o mesmo
+  // estado poderiam produzir telas diferentes, e o compilador do React conta
+  // com essa pureza para reaproveitar trabalho.
+  const [aberturaDaPagina] = useState(() => Date.now());
 
   const carregar = useCallback(async () => {
     try {
@@ -45,6 +59,16 @@ export default function EventoPage() {
     }
   }, [id]);
 
+  // Busca própria, depois da principal e sem bloquear nada: as sugestões vivem
+  // abaixo da dobra, e uma falha ali não pode impedir a compra desta sessão.
+  const carregarRelacionados = useCallback(async () => {
+    try {
+      setRelacionados(await api<RelatedEvents>(`/api/events/${id}/related`));
+    } catch {
+      setRelacionados(null);
+    }
+  }, [id]);
+
   function alternarAssento(assento: Seat) {
     setEscolhidos((atual) => {
       const proximo = new Set(atual);
@@ -56,7 +80,8 @@ export default function EventoPage() {
 
   useEffect(() => {
     void carregar();
-  }, [carregar]);
+    void carregarRelacionados();
+  }, [carregar, carregarRelacionados]);
 
   if (erro) {
     return (
@@ -89,7 +114,7 @@ export default function EventoPage() {
   // que leva a comprar sai do caminho. O backend recusaria a reserva de
   // qualquer jeito ("Este evento já começou"); deixar o botão na tela só
   // convidaria o cliente a percorrer o fluxo inteiro até levar um erro.
-  const encerrado = new Date(evento.starts_at).getTime() <= Date.now();
+  const encerrado = new Date(evento.starts_at).getTime() <= aberturaDaPagina;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6">
@@ -148,6 +173,8 @@ export default function EventoPage() {
             </div>
           )}
 
+          <ComoChegar venue={evento.venue} />
+
           {evento.kind === "SEATED" && !encerrado && (
             <div className="mt-8 rounded-card border border-line bg-white p-4 sm:p-6">
               <h2 className="mb-4 text-base font-semibold text-ink">Escolha seus lugares</h2>
@@ -191,10 +218,123 @@ export default function EventoPage() {
                 aoComprar={carregar}
               />
             )}
+
+            <OutrosHorarios eventos={relacionados?.same_title ?? []} />
           </div>
         </div>
       </div>
+
+      <Relacionados eventos={relacionados?.others ?? []} />
     </div>
+  );
+}
+
+/**
+ * "Como chegar".
+ *
+ * Link para o mapa, e não um mapa embutido. Um iframe do Google Maps carrega
+ * scripts e cookies de terceiro em TODA visita à página, inclusive de quem só
+ * queria ver o preço — e o local aqui é texto livre digitado pelo organizador,
+ * então o pino cairia no lugar errado com frequência. O link resolve o mesmo
+ * problema real (chegar lá), sem chave de API, sem custo por carregamento e
+ * sem entregar o passo do visitante a um terceiro antes de ele pedir.
+ */
+function ComoChegar({ venue }: { venue: string }) {
+  const busca = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(venue)}`;
+
+  return (
+    <div className="mt-8">
+      <h2 className="mb-2 text-base font-semibold text-ink">Como chegar</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-card
+        border border-line bg-white p-4">
+        <p className="text-sm font-medium text-body">{venue}</p>
+        <a
+          href={busca}
+          target="_blank"
+          // noopener: sem isto a aba aberta recebe window.opener e pode
+          // reescrever o endereço desta. noreferrer não manda de onde veio.
+          rel="noopener noreferrer"
+          className="inline-flex h-9 shrink-0 items-center rounded border
+            border-line-strong px-3 text-[13px] font-semibold text-ink hover:bg-canvas"
+        >
+          Ver no mapa
+        </a>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Outras sessões do MESMO filme, ao lado da compra.
+ *
+ * Lista compacta, e não cards com pôster: é o mesmo filme, então a arte seria
+ * a mesma repetida — dois cartazes idênticos lado a lado parecem defeito de
+ * renderização, e o que diferencia as sessões é justamente o que o pôster não
+ * mostra (dia, cinema, preço).
+ *
+ * Fica junto do painel de compra, e não lá embaixo, porque é aqui que a
+ * pergunta nasce: quem vê "esgotado" ou um horário ruim quer a alternativa no
+ * mesmo lance de olhos, não depois de rolar a página inteira.
+ */
+function OutrosHorarios({ eventos }: { eventos: PublicEvent[] }) {
+  if (eventos.length === 0) return null;
+
+  return (
+    <section className="mt-4 overflow-hidden rounded-card border border-line bg-white">
+      <h2 className="border-b border-line px-4 py-2.5 text-sm font-semibold text-ink">
+        Outros horários deste filme
+      </h2>
+      <ul>
+        {eventos.map((e) => {
+          const { dia, mes, hora } = dateParts(e.starts_at);
+          return (
+            <li key={e.id} className="border-b border-line last:border-b-0">
+              <Link
+                href={`/eventos/${e.id}`}
+                className="flex items-center gap-3 px-4 py-3 hover:bg-canvas"
+              >
+                <span className="shrink-0 rounded border border-line bg-canvas px-2 py-1
+                  text-center leading-none">
+                  <span className="block text-sm font-bold text-ink">{dia}</span>
+                  <span className="block text-[9px] font-semibold tracking-wider text-muted">
+                    {mes}
+                  </span>
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-body">
+                    {e.venue}
+                  </span>
+                  <span className="block text-xs text-muted">
+                    às {hora} · {e.available > 0 ? preco(e.price_from) : "Esgotado"}
+                  </span>
+                </span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/**
+ * A metade de baixo da página, que antes acabava no meio do nada.
+ *
+ * Não renderiza esqueleto: é conteúdo abaixo da dobra, e um bloco cinza
+ * piscando no rodapé chama mais atenção do que a informação que ele substitui.
+ */
+function Relacionados({ eventos }: { eventos: PublicEvent[] }) {
+  if (eventos.length === 0) return null;
+
+  return (
+    <section className="mt-12 border-t border-line pt-8">
+      <h2 className="mb-3 text-lg font-bold text-ink">Também em cartaz</h2>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+        {eventos.map((e) => (
+          <EventCard key={e.id} event={e} />
+        ))}
+      </div>
+    </section>
   );
 }
 

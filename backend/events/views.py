@@ -10,6 +10,7 @@ vazamentos ("esqueci de filtrar status neste if"). Duas classes, dois querysets.
 """
 
 from django.db.models import Q
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiParameter, extend_schema
 from rest_framework import generics, status, viewsets
@@ -85,6 +86,66 @@ class PublicEventDetailView(generics.RetrieveAPIView):
         .select_related("organizer")
         .com_preco_inicial()
     )
+
+
+class PublicEventRelatedView(APIView):
+    """
+    O que existe em volta deste evento: outras sessões do MESMO item do
+    catálogo, e o que mais está em cartaz.
+
+    Duas listas numa resposta só, e não duas rotas. Elas aparecem juntas, na
+    mesma rolagem, e partir em dois pediria duas idas ao servidor para
+    desenhar um bloco.
+
+    Rota separada do detalhe de propósito: quem abre a página quer comprar
+    ingresso desta sessão. Embutir as sugestões no `/api/events/{id}` faria
+    duas queries a mais no caminho crítico, para preencher algo que vive
+    abaixo da dobra.
+    """
+
+    permission_classes = (AllowAny,)
+    LIMITE = 6
+
+    @extend_schema(responses=EventPublicSerializer(many=True))
+    def get(self, request, pk):
+        # Sem filtro de data no ALVO — pela mesma razão do detalhe: a página de
+        # uma sessão encerrada continua de pé para quem esteve lá. E é
+        # justamente aí que sugerir o que está em cartaz vale mais.
+        evento = get_object_or_404(
+            Event.objects.filter(status=Event.Status.PUBLISHED), pk=pk
+        )
+
+        em_cartaz = (
+            Event.objects.filter(
+                status=Event.Status.PUBLISHED, starts_at__gte=timezone.now()
+            )
+            .exclude(pk=evento.pk)
+            .select_related("organizer")
+            .com_preco_inicial()
+        )
+
+        # Mesmo item do catálogo = mesmo filme/show em outra data ou outro
+        # cinema. É a sugestão mais forte que existe aqui: quem chegou numa
+        # sessão esgotada quase sempre quer o mesmo filme noutro horário.
+        mesmo_titulo = list(
+            em_cartaz.filter(source=evento.source, external_id=evento.external_id)[
+                : self.LIMITE
+            ]
+        )
+
+        # exclude por (source, external_id), e não pelos ids já colhidos: se o
+        # filme tiver 8 sessões e o corte pegar 6, as 2 restantes voltariam
+        # aqui embaixo como se fossem "outro evento".
+        outros = list(
+            em_cartaz.exclude(
+                source=evento.source, external_id=evento.external_id
+            )[: self.LIMITE]
+        )
+
+        return Response({
+            "same_title": EventPublicSerializer(mesmo_titulo, many=True).data,
+            "others": EventPublicSerializer(outros, many=True).data,
+        })
 
 
 class PublicEventSeatsView(generics.ListAPIView):
