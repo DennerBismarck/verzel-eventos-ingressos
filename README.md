@@ -333,9 +333,9 @@ _(seção obrigatória — preencher ao longo da semana)_
 
 **Ferramenta:** Claude Code (Opus), em pair programming.
 
-**Como trabalhei:** a IA escreveu a maior parte do código; eu dirigi as decisões
-de projeto e revisei o que entrou. Em cada ponto de decisão eu recebia as opções
-com os trade-offs e escolhia — as escolhas estão registradas uma a uma em
+**Como trabalhei:** a IA escreveu a maior parte do código; eu dirigi o projeto e
+revisei o que entrou. Em cada ponto de decisão eu recebia as opções com os
+trade-offs e escolhia — as escolhas estão registradas uma a uma em
 [`docs/DECISIONS.md`](docs/DECISIONS.md), com a alternativa que descartei e o
 porquê. Não é um log gerado no fim: foi preenchido enquanto decidia.
 
@@ -343,10 +343,52 @@ porquê. Não é um log gerado no fim: foi preenchido enquanto decidia.
 CORS, JWT, WhiteNoise), `render.yaml`, comando de seed, models, clientes das APIs
 externas, serializers, views, lógica de reserva/QR/portaria e todas as telas.
 
-**O que eu fiz sem IA:** as decisões de arquitetura e modelagem listadas no
-`DECISIONS.md` — contador vs. contagem para o estoque, constraint no banco além
-do lock, unicidade do par `(source, external_id)`, separação dos serializers por
-audiência, e a escolha de suportar as duas APIs externas em vez de uma.
+### As decisões que foram minhas
+
+Não são "eu revisei". São escolhas que mudaram o que o projeto é, cada uma
+rastreável a um commit:
+
+- **Arquitetura e modelagem** — contador vs. contagem para o estoque; a
+  `CheckConstraint` no banco *além* do lock, como segunda camada independente;
+  unicidade do par `(source, external_id)`; serializers separados **por
+  audiência**, e não por model, para que campo interno não vaze por descuido; e
+  suportar as **duas** APIs externas em vez de uma, com os provedores
+  normalizados atrás de um contrato só.
+
+- **A camada de senioridade foi pedido meu, não sugestão da IA.** Depois do
+  escopo obrigatório pronto, eu determinei o que faltava para o projeto passar
+  de "atende ao enunciado" para "aguenta produção": tratamento de segurança da
+  informação, arquitetura mais escalável, otimização de consultas e o problema
+  de dois clientes disputando o mesmo assento. Daí saíram o rate limit por
+  escopo, a rotação de refresh com blacklist, o cabeçalho de segurança fora do
+  `DEBUG`, os testes de contagem de query e a análise da fila por seção — que
+  eu decidi **não** construir, com a justificativa registrada em
+  ["O que eu decidi NÃO construir"](docs/DECISIONS.md).
+
+- **Revisão de produto sobre a aplicação rodando.** Percorri o sistema no ar e
+  levantei ~35 problemas concretos, com diagnóstico: o preço saindo "R$ 0,00"
+  em evento de lugar marcado (a home lia `event.price` em vez do mínimo das
+  seções), a atribuição obrigatória ao TMDB faltando no rodapé, o seed com
+  sinopse genérica repetida em doze eventos, o gradiente ausente atrás da data
+  colidindo com a arte do cartaz, a portaria precisando de faixa de resultado,
+  código curto e contador ao vivo. **Ordem de execução minha: bugs primeiro.**
+
+- **Recortes de escopo.** Cortei meia-entrada e janela de venda por não estarem
+  no enunciado; mantive os pôsteres reais do TMDb depois de concluir que a
+  atribuição já satisfaz a licença e que arte genérica pioraria a vitrine.
+
+- **Direção de design.** Determinei que a interface não podia ter cara de
+  gerada por IA, e apontei as referências a copiar: Ingresso.com, Eventim e
+  Sympla. Daí vieram a grade densa de pôsteres 2:3, o bloco de data sobre a
+  imagem e o laranja restrito ao CTA.
+
+- **Prioridade de performance.** Identifiquei que o catálogo externo era
+  buscado de novo a cada visita e pedi o cache — que virou *stale-while-
+  revalidate*: 1,25s de espera medidos viraram 0,001s.
+
+- **Padrão do histórico.** Exigi commits atômicos com mensagem que explica
+  sintoma, causa e decisão. É o que torna o processo auditável em vez de
+  um resultado que aparece pronto.
 
 **Verificação:** não aceitei código sem exercitá-lo. Cada camada foi testada
 contra o Postgres real e num navegador real antes de virar commit — incluindo a
