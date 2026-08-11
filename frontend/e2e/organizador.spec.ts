@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-import { abrirEventoDisponivel, comprarPista, entrar, sair } from "./apoio";
+import {
+  abrirEventoDisponivel,
+  comprarPista,
+  entrar,
+  encontrarLinha,
+  sair,
+} from "./apoio";
 
 test.describe("organizador", () => {
   test("painel lista os próprios eventos, inclusive rascunho", async ({ page }) => {
@@ -44,13 +50,39 @@ test.describe("organizador", () => {
     await expect(page.locator("article").filter({ hasText: "Rascunho" }).first()).toBeVisible();
   });
 
+  test("lista paginada avisa que tem mais, em vez de esconder", async ({ page }) => {
+    await entrar(page, "organizador");
+
+    // A API pagina de 12 em 12. Antes do botão, o 13º evento simplesmente não
+    // existia na tela e nada avisava — o organizador concluiria que o evento
+    // lá do fim tinha sumido.
+    const linhas = page.locator("article");
+    await expect(linhas).toHaveCount(12);
+
+    const mais = page.getByRole("button", { name: "Mostrar mais eventos" });
+    await expect(mais).toBeVisible();
+    await mais.click();
+
+    await expect.poll(() => linhas.count()).toBeGreaterThan(12);
+    await expect(mais).toHaveCount(0);
+  });
+
   test("publicar e despublicar muda a vitrine", async ({ page }) => {
     await entrar(page, "organizador");
+    // Filtra por rascunho em vez de procurar na lista: com mais de 12 eventos
+    // o rascunho pode estar na segunda página.
+    await page.getByRole("button", { name: "Rascunhos" }).click();
     const rascunho = page.locator("article").filter({ hasText: "Rascunho" }).first();
     const titulo = await rascunho.getByRole("heading").innerText();
 
     await rascunho.getByRole("button", { name: "Publicar" }).click();
-    const linha = page.locator("article").filter({ hasText: titulo });
+
+    // Publicado, ele sai do filtro "Rascunhos" — o sumiço É a confirmação de
+    // que a mudança valeu. Para ver o novo estado, volta para "Todos".
+    await expect(page.locator("article").filter({ hasText: titulo })).toHaveCount(0);
+    await page.getByRole("button", { name: "Todos" }).click();
+
+    const linha = await encontrarLinha(page, titulo);
     await expect(linha.getByText("Publicado")).toBeVisible();
 
     await sair(page);
@@ -63,12 +95,16 @@ test.describe("organizador", () => {
     // Despublicar mora atrás do menu de três pontinhos: é a ação que tira o
     // evento do ar para todo mundo, e ficava colada no botão "Vendas".
     await entrar(page, "organizador");
-    await page
-      .locator("article")
-      .filter({ hasText: titulo })
-      .getByRole("button", { name: /Mais ações/ })
-      .click();
+    // A lista abre paginada: o evento pode estar na segunda página, e é
+    // exatamente o que um organizador faria para chegar até ele.
+    const paraDespublicar = await encontrarLinha(page, titulo);
+    await paraDespublicar.getByRole("button", { name: /Mais ações/ }).click();
     await page.getByRole("menuitem", { name: "Despublicar" }).click();
+
+    // Confere pelo FILTRO, e não caçando na lista completa: a mudança faz a
+    // lista recarregar do zero, as páginas já abertas se perdem e o evento
+    // volta para a segunda. Filtrado por rascunho ele é o único, na primeira.
+    await page.getByRole("button", { name: "Rascunhos" }).click();
     await expect(
       page.locator("article").filter({ hasText: titulo }).getByText("Rascunho"),
     ).toBeVisible();
@@ -95,7 +131,10 @@ test.describe("organizador", () => {
     await page.getByRole("button", { name: /Criar e publicar/ }).click();
 
     await expect(page).toHaveURL(/\/eventos\/\d+/);
-    await expect(page.getByText("Cine Teste, São Paulo")).toBeVisible();
+    // .first(): o local aparece duas vezes na página — na ficha "Onde" e no
+    // bloco "Como chegar". As duas são corretas; o seletor é que precisa dizer
+    // qual delas basta.
+    await expect(page.getByText("Cine Teste, São Paulo").first()).toBeVisible();
     await expect(page.getByText("R$ 45,00").first()).toBeVisible();
   });
 

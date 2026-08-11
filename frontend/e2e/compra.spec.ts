@@ -16,7 +16,7 @@ test.describe("compra de pista", () => {
     await abrirEventoDisponivel(page);
 
     const antes = Number(
-      (await page.getByText(/disponíve/).innerText()).match(/\d+/)![0],
+      (await page.locator("aside").getByText(/disponíve/).innerText()).match(/\d+/)![0],
     );
 
     await page.getByRole("button", { name: "Aumentar quantidade" }).click();
@@ -33,7 +33,7 @@ test.describe("compra de pista", () => {
     // Cancelar tem que devolver ao estoque, não só mudar o texto da tela.
     await page.reload();
     const depois = Number(
-      (await page.getByText(/disponíve/).innerText()).match(/\d+/)![0],
+      (await page.locator("aside").getByText(/disponíve/).innerText()).match(/\d+/)![0],
     );
     expect(depois).toBe(antes);
   });
@@ -83,7 +83,7 @@ test.describe("compra de pista", () => {
     await abrirEventoDisponivel(page);
 
     const disponiveis = () =>
-      page.getByText(/disponíve/).innerText().then((s) => Number(s.match(/\d+/)![0]));
+      page.locator("aside").getByText(/disponíve/).innerText().then((s) => Number(s.match(/\d+/)![0]));
     const antes = await disponiveis();
 
     const mais = page.getByRole("button", { name: "Aumentar quantidade" });
