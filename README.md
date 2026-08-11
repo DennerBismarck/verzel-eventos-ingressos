@@ -3,6 +3,29 @@
 Desafio Elite Dev (Verzel) — organizador publica eventos a partir de um catálogo externo,
 cliente compra ingressos com QR, portaria valida na entrada.
 
+### ▶ Está no ar — não precisa instalar nada para avaliar
+
+| | |
+|---|---|
+| **Aplicação** | **https://verzel-eventos-ingressos.vercel.app** |
+| API | https://ingressos-api.onrender.com |
+| Documentação da API (Swagger) | https://ingressos-api.onrender.com/api/docs |
+
+**Entre com `organizador@verzel.dev`, `cliente1@verzel.dev` ou
+`portaria@verzel.dev` — senha `verzel123` para todos.** A tela de login tem
+atalho para as três contas; não precisa digitar. O banco já vem com 16 eventos,
+mapa de assentos e histórico de vendas.
+
+> ⏳ A API hiberna após ~15 min sem tráfego (plano gratuito da Render). **A
+> primeira visita pode levar até 50 s**; a partir daí é instantâneo. Se a
+> vitrine demorar a preencher, é isso — não é bug.
+
+**Percurso sugerido (5 min):** abra a vitrine → entre como cliente e compre um
+ingresso de pista → veja o QR em "Meus ingressos" → copie o link de
+compartilhamento e abra numa aba anônima (repare que o link **não** revela o
+código de entrada) → entre como portaria, escolha a sessão e valide o ingresso
+→ tente validar de novo.
+
 > **Status:** escopo completo e publicado — vitrine, compra por pista **e por
 > lugar marcado**, ingresso com QR assinado, compartilhamento por link e
 > validação na portaria.
@@ -400,7 +423,11 @@ do `DECISIONS.md`, com sintoma, método de diagnóstico, causa e correção — 
 eles uma hidratação abortada que deixava duas telas sem JavaScript e um erro
 síncrono que derrubava a página da portaria justamente quando a câmera falhava.
 
-Artefatos de contexto usados com a IA estão versionados em [`docs/`](docs/).
+**Artefatos de contexto versionados**, como o enunciado pede: o prompt de
+abertura em [`docs/PROMPT-SESSAO.md`](docs/PROMPT-SESSAO.md) e — mais
+revelador — [`docs/PROMPTS.md`](docs/PROMPTS.md), com as instruções que
+dirigiram o trabalho depois que ele começou: onde eu intervim, o que recusei
+e o que mandei refazer.
 
 ---
 
@@ -434,6 +461,17 @@ limitações conhecidas, declaradas de propósito.
   [`frontend/e2e/manual/verificar-camera.md`](frontend/e2e/manual/verificar-camera.md)
   para ser reproduzível. Na suíte automática ficam a digitação manual e o
   comportamento quando a câmera falha.
+
+- **A primeira visita pode levar até 50 segundos.** Não é lentidão da
+  aplicação: é a **Render no plano gratuito**, que desliga o contêiner após
+  ~15 min sem tráfego. A requisição seguinte precisa subir o processo Python,
+  conectar no Postgres e só então responder — e nenhum cache nosso resolve
+  isso, porque o processo que serviria o cache é justamente o que está
+  dormindo. Medido com a API já acordada: **~0,5 s** para a vitrine inteira.
+  A tela avisa em vez de parecer travada — o erro de carregamento diz que a
+  API pode estar hibernando. As saídas seriam plano pago ou um ping periódico
+  para impedir a hibernação; o ping contraria o propósito do plano gratuito e
+  eu preferi declarar a limitação a contorná-la.
 
 - **O catálogo externo pode ficar até 6 horas desatualizado.** É o preço
   escolhido para que ninguém espere pelo TMDb: a cópia guardada é servida na

@@ -9,6 +9,7 @@ com a expectativa certa.
 |---------|---------|------------|
 | [`DECISIONS.md`](DECISIONS.md) | 60+ decisões numeradas, cada uma com a alternativa descartada e o porquê. Mais duas seções que valem por si: **"Bugs que valem contar"** (sintoma → diagnóstico → causa → correção) e **"O que eu decidi NÃO construir"** | Para qualquer pergunta que comece com "por que você fez assim?" |
 | [`DEFESA.md`](DEFESA.md) | Os quatro mecanismos que sustentam o projeto — lock de estoque, HMAC do QR, token de compartilhamento e validação na portaria — explicados pelo funcionamento, não por decoreba | Antes da entrevista |
+| [`PROMPTS.md`](PROMPTS.md) | Como eu conduzi a ferramenta: os prompts que dirigiram o trabalho, transcritos, com o que cada um provocou. O enunciado pede explicitamente para versionar os artefatos de contexto | Para ver o processo por trás do código |
 | [`CHALLENGE.md`](CHALLENGE.md) | Transcrição do enunciado da Verzel | Para conferir requisito contra implementação |
 
 ## Registros do dia 0 — mantidos inalterados, e já desatualizados
