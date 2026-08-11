@@ -39,7 +39,8 @@ São as duas seções que dizem mais sobre o projeto do que a lista de recursos.
 | [Stack](#stack) · [Como rodar](#como-rodar) · [Telas](#telas) | Para pôr de pé |
 | [Dados de teste](#dados-de-teste-seed) · [API](#api) | Para explorar |
 | [Segurança](#segurança) · [Testes](#testes) · [Deploy](#deploy) | Como foi construído |
-| [Decisões técnicas](#decisões-técnicas) · [Uso de IA](#uso-de-ia) · [O que faltou](#o-que-faltou--não-funciona-como-esperado) | Por que foi construído assim |
+| [Decisões técnicas](#decisões-técnicas) · [O que acrescentei por conta própria](#o-que-eu-acrescentei-por-conta-própria) | Por que foi construído assim |
+| [Uso de IA](#uso-de-ia) · [O que faltou](#o-que-faltou--não-funciona-como-esperado) | O processo e os limites |
 
 Documentação completa em [`docs/`](docs/) — decisões, roteiro de defesa e os
 registros de planejamento do primeiro dia.
@@ -348,6 +349,104 @@ O log completo está em [`docs/DECISIONS.md`](docs/DECISIONS.md). Destaques:
   checagem de estado → válido / inválido / já utilizado / evento errado.
 - **Papéis:** campo `role` no User + permission classes do DRF por endpoint.
   A guarda de rota no front é UX; a autorização real é no backend.
+
+---
+
+## O que eu acrescentei por conta própria
+
+Nada abaixo está no enunciado. Cada item nasceu de olhar o fluxo pronto e
+perguntar quem usa isso, em que situação — e o *porquê* importa mais que o
+*quê*, então ele vem primeiro.
+
+### Porque a portaria é usada em pé, numa mão, com fila esperando
+
+Esta tela concentra o maior esforço do projeto, e é a que o enunciado descreve
+em menos palavras ("tela de portaria, com retorno claro").
+
+- **Código de 8 caracteres em vez do UUID.** O enunciado pede digitação manual
+  como alternativa à câmera. Um UUID tem 36 caracteres com hífens — ninguém
+  dita isso numa fila. O alfabeto exclui `O`/`0` e `I`/`1`, os pares que se
+  confundem em papel amassado. O QR assinado continua sendo o caminho forte;
+  este é o degradado, protegido por autenticação e rate limit em vez de
+  assinatura, e o risco está calculado no `DECISIONS.md`.
+- **Resultado em meia tela que some sozinho em 2 s**, com vibração. Quem está
+  na porta não tem mão livre para fechar um aviso a cada pessoa; uma tela que
+  exige toque vira gargalo. Os títulos são ordens curtas — "Pode entrar", "Não
+  vale", "Outra sessão" — porque são lidas de relance.
+- **Desfazer as últimas 5 leituras**, com janela de 5 minutos. Validar o
+  ingresso errado acontece; sem desfazer, a pessoa certa fica na porta sem
+  recurso.
+- **Placar ao vivo** (`37/80 validados`), para saber quanto falta sem sair da
+  tela.
+- **Estados da câmera** — pedindo permissão, negada com instrução de como
+  liberar, indisponível. E o retângulo preto some quando não há câmera, porque
+  meia tela vazia empurrava para baixo justamente o campo de digitação, que é a
+  saída de quem está nesse estado.
+
+### Porque reserva sem prazo trava estoque para sempre
+
+- **Reserva expira em 10 minutos**, com contagem regressiva na tela. Sem prazo,
+  quem abandona o checkout segura o lugar indefinidamente e o evento "esgota"
+  sem ter vendido. O estado é `EXPIRED`, separado de `CANCELLED`: "você
+  cancelou" e "o prazo acabou" são histórias diferentes para quem lê o
+  histórico.
+
+### Porque compartilhar um ingresso não pode ser ceder a entrada
+
+- **Token de compartilhamento separado do código de entrada.** O enunciado pede
+  o link; ele não diz o que o link revela. Se o link carregasse o código,
+  mandar o ingresso para alguém no WhatsApp entregaria a entrada junto. Quem
+  abre o link vê o ingresso; o que abre a catraca fica com o titular.
+
+### Porque o organizador precisa saber como o evento vai
+
+O enunciado cita "painel do organizador" como opcional, sem dizer o que ele
+mostra.
+
+- **Painel de vendas por evento** — receita, ocupação, quem comprou e quantos
+  já entraram.
+- **Resumo no topo** somando todos os eventos, com abas de período, filtro,
+  ordenação e paginação explícita.
+- **Prévia do mapa de assentos** redesenhada a cada tecla na criação do evento.
+  "5 filas × 10 lugares" é um número, não uma sala — sem a prévia, o organizador
+  só descobria o formato depois de publicar, quando refazer o mapa já podia
+  estar bloqueado por uma venda.
+
+### Porque a página do evento acabava no meio do nada
+
+- **Outros horários do mesmo filme**, ao lado da compra — é ali que a pergunta
+  nasce para quem viu um horário ruim.
+- **Como chegar** com link para o mapa, e **não** um iframe: o embed carrega
+  scripts e cookies de terceiro em toda visita, inclusive a de quem só queria
+  ver o preço.
+
+### Porque uma API pública sem limite é um convite
+
+- **Rate limit por escopo**, com o do login chaveado na **conta alvo** e não no
+  IP — um atacante troca de endereço, mas o e-mail que ele quer invadir
+  continua o mesmo. E só a tentativa que **falha** gasta cota: força bruta é uma
+  sequência de erros, e cobrar do acerto punia quem entra em três aparelhos.
+- **Rotação de refresh com blacklist**, cabeçalhos de segurança fora do
+  `DEBUG`, e a chave que assina o QR separada da `SECRET_KEY`.
+
+### Porque ninguém deve esperar por uma API de terceiro
+
+- **Cache "serve primeiro, atualiza depois"** no catálogo externo: a cópia
+  guardada sai na hora mesmo vencida e a renovação roda em segundo plano.
+  Medido: 1,25 s → 0,001 s. Com o TMDb fora do ar, o catálogo continua
+  respondendo por até 7 dias.
+
+### Porque documentação que não é gerada do código envelhece
+
+- **Swagger em `/api/docs`**, gerado do próprio código via drf-spectacular.
+- **Testes de contagem de query** que falham se um N+1 voltar — comparam a
+  mesma rota com poucos e com muitos registros e exigem o mesmo número de
+  consultas.
+
+### Porque a licença exige
+
+- **Atribuição ao TMDB** no rodapé, com o logo oficial. Não é iniciativa de
+  produto: é obrigação do contrato de uso da API, e estava faltando.
 
 ---
 
