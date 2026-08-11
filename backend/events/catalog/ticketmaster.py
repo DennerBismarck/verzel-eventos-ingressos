@@ -7,7 +7,6 @@ import logging
 
 import requests
 from django.conf import settings
-from django.core.cache import cache
 from django.utils.dateparse import parse_datetime
 
 from .base import CatalogError, CatalogItem, CatalogProvider
@@ -27,11 +26,11 @@ class TicketmasterProvider(CatalogProvider):
         if not self.is_configured():
             raise CatalogError("TICKETMASTER_API_KEY não configurada.")
 
-        cache_key = f"catalog:tm:{query.lower()}:{limit}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
+        # v2 marca o formato guardado — ver o comentário equivalente no tmdb.py.
+        chave = f"catalog:v2:tm:{query.lower()}:{limit}"
+        return self.com_cache(chave, lambda: self._buscar_na_api(query, limit))
 
+    def _buscar_na_api(self, query, limit):
         params = {"apikey": settings.TICKETMASTER_API_KEY, "size": limit}
         if query:
             params["keyword"] = query
@@ -54,9 +53,7 @@ class TicketmasterProvider(CatalogProvider):
 
         # A Ticketmaster segue HAL: os dados vêm aninhados em "_embedded".
         raw_events = payload.get("_embedded", {}).get("events", [])
-        items = [self._to_item(raw) for raw in raw_events[:limit]]
-        cache.set(cache_key, items, self.cache_ttl)
-        return items
+        return [self._to_item(raw) for raw in raw_events[:limit]]
 
     def _to_item(self, raw):
         return CatalogItem(

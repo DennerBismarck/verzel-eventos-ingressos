@@ -4,7 +4,6 @@ import logging
 
 import requests
 from django.conf import settings
-from django.core.cache import cache
 
 from .base import CatalogError, CatalogItem, CatalogProvider
 
@@ -26,12 +25,15 @@ class TMDbProvider(CatalogProvider):
         if not self.is_configured():
             raise CatalogError("TMDB_API_KEY não configurada.")
 
-        # Chave de cache inclui a query: buscas diferentes, entradas diferentes.
-        cache_key = f"catalog:tmdb:{settings.TMDB_LANGUAGE}:{query.lower()}:{limit}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
+        # A chave inclui a query e o idioma: buscas diferentes, entradas
+        # diferentes. O "v2" marca o FORMATO do que está guardado — a entrada
+        # deixou de ser uma lista e passou a ser (lista, quando_foi_gravado).
+        # Sem o prefixo, uma cópia antiga em produção quebraria o desempacote
+        # logo depois do deploy.
+        chave = f"catalog:v2:tmdb:{settings.TMDB_LANGUAGE}:{query.lower()}:{limit}"
+        return self.com_cache(chave, lambda: self._buscar_na_api(query, limit))
 
+    def _buscar_na_api(self, query, limit):
         # "em cartaz" quando não há busca; senão, busca por título.
         if query:
             url, params = f"{API_BASE}/search/movie", {"query": query}
@@ -59,9 +61,7 @@ class TMDbProvider(CatalogProvider):
             )
             raise CatalogError("Falha ao consultar o TMDb.") from exc
 
-        items = [self._to_item(raw) for raw in payload.get("results", [])[:limit]]
-        cache.set(cache_key, items, self.cache_ttl)
-        return items
+        return [self._to_item(raw) for raw in payload.get("results", [])[:limit]]
 
     def _to_item(self, raw):
         poster = raw.get("poster_path")
