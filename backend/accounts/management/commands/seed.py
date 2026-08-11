@@ -15,6 +15,7 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from events.models import Event, Seat
@@ -64,7 +65,16 @@ MARCA_SEED = "Venda de demonstração criada pelo seed"
 # O teto é 5 porque a partir de 6 o pagamento é recusado (LIMITE_RECUSA).
 LOTES = (2, 1, 3, 1, 4, 2, 1, 5, 2, 3)
 
-# (external_id, título, cartaz, local, dias, hora, preço, capacidade, status)
+# (external_id, título, cartaz, local, dias, hora, preço, capacidade, vendidos, status)
+#
+# A IDENTIDADE de uma sessão é (external_id, local), não só o external_id:
+# o mesmo filme pode estar em cartaz em dois cinemas, e é justamente isso
+# que alimenta o bloco "outras sessões deste filme" na página do evento.
+#
+# O número de vendidos mora AQUI, ao lado da capacidade que ele não pode
+# ultrapassar. Numa tabela paralela por external_id, duas sessões do mesmo
+# filme herdariam o mesmo número — e a checagem "vendidos <= capacidade"
+# ficava a dez linhas de distância do par que ela protege.
 #
 # Datas relativas a hoje: o seed nunca "vence". Um evento com data fixa no
 # passado sumiria da vitrine meses depois e o avaliador acharia que quebrou.
@@ -78,37 +88,46 @@ CARTAZ = "https://image.tmdb.org/t/p/w500"
 
 EVENTOS = [
     ("969681", "Homem-Aranha: Um Novo Dia", "/x0nvYzQpyJc5pdT9lMnkMuYAg0O.jpg",
-     "Cinemark Eldorado, São Paulo", 5, 20, "42.00", 180, Event.Status.PUBLISHED),
+     "Cinemark Eldorado, São Paulo", 5, 20, "42.00", 180, 47, Event.Status.PUBLISHED),
     ("1368337", "A Odisseia", "/muMwJAiMtReEHLKpKMWt2rMkYF7.jpg",
-     "Petra Belas Artes, São Paulo", 8, 19, "38.50", 90, Event.Status.PUBLISHED),
+     "Petra Belas Artes, São Paulo", 8, 19, "38.50", 90, 31, Event.Status.PUBLISHED),
     ("1084244", "Toy Story 5", "/sssrBhdvDcczgMQYDc8oCoSuFEJ.jpg",
-     "Cinépolis JK Iguatemi, São Paulo", 10, 15, "36.00", 200, Event.Status.PUBLISHED),
+     "Cinépolis JK Iguatemi, São Paulo", 10, 15, "36.00", 200, 112, Event.Status.PUBLISHED),
     ("634649", "Homem-Aranha: Sem Volta Para Casa", "/xaKydnMw6wR1MBAjS5seGPVusbs.jpg",
-     "Reserva Cultural, São Paulo", 12, 21, "30.00", 120, Event.Status.PUBLISHED),
+     "Reserva Cultural, São Paulo", 12, 21, "30.00", 120, 9, Event.Status.PUBLISHED),
     ("1081003", "Supergirl", "/qhXfLI1gDWaahzfHT0cb2CH61hO.jpg",
-     "Cinemark Villa-Lobos, São Paulo", 14, 20, "44.00", 150, Event.Status.PUBLISHED),
+     "Cinemark Villa-Lobos, São Paulo", 14, 20, "44.00", 150, 8, Event.Status.PUBLISHED),
     ("1212763", "A Morte do Demônio: Em Chamas", "/fteLdvfRnltfLjAEnsl5E3vImnW.jpg",
-     "Cine Marquise, São Paulo", 16, 22, "34.00", 80, Event.Status.PUBLISHED),
+     "Cine Marquise, São Paulo", 16, 22, "34.00", 80, 55, Event.Status.PUBLISHED),
     ("1108427", "Moana", "/eEsiTi19EYBluPQliS3CMnBgqTj.jpg",
-     "Cinesystem Iguatemi, Campinas", 18, 14, "28.00", 140, Event.Status.PUBLISHED),
+     "Cinesystem Iguatemi, Campinas", 18, 14, "28.00", 140, 74, Event.Status.PUBLISHED),
     ("1284465", "A Morte de Robin Hood", "/o0QndnepFPWget2kdKpzh26RBYt.jpg",
-     "Cinemateca Brasileira, São Paulo", 21, 19, "25.00", 60, Event.Status.PUBLISHED),
+     "Cinemateca Brasileira, São Paulo", 21, 19, "25.00", 60, 12, Event.Status.PUBLISHED),
     ("1339713", "Obsessão", "/wUc6IDf5ChjM1UyQye21qFBeJY0.jpg",
-     "Espaço Itaú Augusta, São Paulo", 24, 21, "32.00", 70, Event.Status.PUBLISHED),
+     "Espaço Itaú Augusta, São Paulo", 24, 21, "32.00", 70, 26, Event.Status.PUBLISHED),
     # Um esgotado, para a vitrine mostrar o estado "Esgotado" sem ninguém comprar.
     ("1315772", "Minions & Monstros", "/hTowtXrkCY7FJyoj4p91JckrJSE.jpg",
-     "Cinemark Shopping Metrô Tatuapé, São Paulo", 6, 16, "39.00", 40, Event.Status.PUBLISHED),
+     "Cinemark Shopping Metrô Tatuapé, São Paulo", 6, 16, "39.00", 40, 40, Event.Status.PUBLISHED),
     # Rascunho: prova que a vitrine pública filtra por status.
     ("1375646", "Zona Zero", "/hWT5fHzVcxq06SuLfAWYVCrue7P.jpg",
-     "Cinesala, São Paulo", 30, 20, "35.00", 50, Event.Status.DRAFT),
+     "Cinesala, São Paulo", 30, 20, "35.00", 50, 0, Event.Status.DRAFT),
     # Duas sessões que JÁ ACONTECERAM (dias negativos). Sem elas, a aba "Já
     # aconteceram" do painel do organizador nasce vazia e o filtro por data da
     # vitrine nunca é exercitado — foi assim que o bug de anunciar evento
     # vencido passou despercebido até agora.
     ("1061474", "Superman", "/v8ezJI3qfEv4OYq8AWSp4inFIwE.jpg",
-     "Cinemark Eldorado, São Paulo", -6, 21, "42.00", 160, Event.Status.PUBLISHED),
+     "Cinemark Eldorado, São Paulo", -6, 21, "42.00", 160, 148, Event.Status.PUBLISHED),
     ("1087192", "Como Treinar o Seu Dragão", "/vdvEClt3J8sFWxyMo0Jm7JpouEo.jpg",
-     "Cinesystem Iguatemi, Campinas", -13, 16, "30.00", 120, Event.Status.PUBLISHED),
+     "Cinesystem Iguatemi, Campinas", -13, 16, "30.00", 120, 96, Event.Status.PUBLISHED),
+    # MESMO external_id do primeiro da lista: duas outras sessões de
+    # "Homem-Aranha: Um Novo Dia", em outro cinema e em outro dia. É o que faz
+    # o bloco "outras sessões deste filme" existir na página do evento — e é
+    # também o comportamento real de uma bilheteria, onde um lançamento nunca
+    # tem uma sessão só.
+    ("969681", "Homem-Aranha: Um Novo Dia", "/x0nvYzQpyJc5pdT9lMnkMuYAg0O.jpg",
+     "Cinépolis JK Iguatemi, São Paulo", 6, 22, "46.00", 120, 63, Event.Status.PUBLISHED),
+    ("969681", "Homem-Aranha: Um Novo Dia", "/x0nvYzQpyJc5pdT9lMnkMuYAg0O.jpg",
+     "Cinesystem Iguatemi, Campinas", 11, 18, "38.00", 100, 21, Event.Status.PUBLISHED),
 ]
 
 # Sinopses REAIS do TMDb, colhidas com a própria integração do projeto e
@@ -212,23 +231,6 @@ SINOPSES = {
     ),
 }
 
-# Quantos ingressos já "vendidos" em cada evento, para a vitrine e o painel do
-# organizador não aparecerem zerados. Chave = external_id.
-VENDIDOS = {
-    "969681": 47,     # bom movimento
-    "1368337": 31,
-    "1084244": 112,   # quase esgotando
-    "634649": 9,      # acabou de entrar em cartaz
-    "1081003": 8,
-    "1212763": 55,
-    "1108427": 74,
-    "1284465": 12,
-    "1339713": 26,
-    "1315772": 40,    # esgotado (capacidade 40)
-    # Sessões encerradas: número alto, como fica um evento no fim da carreira.
-    "1061474": 148,
-    "1087192": 96,
-}
 
 # Um evento de LUGAR MARCADO. Sem ele, o mapa de assentos só apareceria para
 # quem criasse um evento na mão — e quem for avaliar provavelmente não vai.
@@ -331,7 +333,9 @@ class Command(BaseCommand):
         # cravada no fuso de quem vai assistir.
         agora = timezone.localtime(timezone.now())
 
-        for ext_id, titulo, cartaz, local, dias, hora, preco, capacidade, status in EVENTOS:
+        for (
+            ext_id, titulo, cartaz, local, dias, hora, preco, capacidade, vendidos, status
+        ) in EVENTOS:
             quando = (agora + timedelta(days=dias)).replace(
                 hour=hora, minute=0, second=0, microsecond=0
             )
@@ -339,19 +343,28 @@ class Command(BaseCommand):
             # o seed declarativo — o deploy seguinte conserta um cartaz trocado
             # ou uma data que já passou, em vez de deixar o registro antigo
             # apodrecendo em produção.
+            #
+            # O LOCAL fica de fora: ele faz parte da identidade da sessão (ver
+            # o comentário da tabela). Reescrevê-lo aqui seria pedir para o
+            # registro deixar de casar consigo mesmo na execução seguinte.
             apresentacao = {
                 "title": titulo,
                 "description": descricao_de(ext_id, titulo),
                 "image_url": f"{CARTAZ}{cartaz}",
-                "venue": local,
                 "starts_at": quando,
                 "kind": Event.Kind.GA,
                 "status": status,
                 "price": Decimal(preco),
             }
 
+            # Identidade = (external_id, local). Só pelo external_id, a segunda
+            # sessão do mesmo filme sobrescreveria a primeira em vez de existir
+            # ao lado dela.
             evento = Event.objects.filter(
-                source=Event.Source.TMDB, external_id=ext_id, organizer=organizador
+                source=Event.Source.TMDB,
+                external_id=ext_id,
+                organizer=organizador,
+                venue=local,
             ).first()
 
             if evento is None:
@@ -359,8 +372,9 @@ class Command(BaseCommand):
                     source=Event.Source.TMDB,
                     external_id=ext_id,
                     organizer=organizador,
+                    venue=local,
                     capacity=capacidade,
-                    sold_count=VENDIDOS.get(ext_id, 0),
+                    sold_count=vendidos,
                     **apresentacao,
                 )
                 marca = "+"
@@ -386,10 +400,20 @@ class Command(BaseCommand):
         # Remove eventos de seed que saíram da lista (ex.: o elenco antigo, sem
         # cartaz). Só os que ninguém reservou — se houver reserva, o evento
         # deixou de ser dado de demonstração e vira histórico de verdade.
-        conhecidos = [e[0] for e in EVENTOS] + [EVENTO_COM_LUGAR["external_id"]]
+        #
+        # A comparação é pelo PAR (external_id, local), a mesma identidade que
+        # a criação usa. Só pelo external_id, mover uma sessão de cinema
+        # deixaria a antiga viva para sempre — ela continuaria "conhecida".
+        conhecidos = Q(
+            external_id=EVENTO_COM_LUGAR["external_id"],
+            venue=EVENTO_COM_LUGAR["venue"],
+        )
+        for e in EVENTOS:
+            conhecidos |= Q(external_id=e[0], venue=e[3])
+
         obsoletos = Event.objects.filter(
             organizer=organizador, source=Event.Source.TMDB
-        ).exclude(external_id__in=conhecidos)
+        ).exclude(conhecidos)
 
         # Reservas nascidas AQUI não contam como histórico de verdade — foi o
         # próprio seed que as inventou. Sem esta distinção, gerar as vendas de
