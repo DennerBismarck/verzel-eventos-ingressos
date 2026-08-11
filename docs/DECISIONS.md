@@ -334,6 +334,22 @@ coisas diferentes.
 borda. O seed é código: se ele só produz eventos futuros, a metade do sistema
 que lida com o passado nunca é exercitada.
 
+### Dia 7 — o mapa que eu decidi não embutir
+
+A página do evento pedia um mapa do local. A resposta óbvia é um iframe do
+Google Maps. Não embuti, por três razões que valem mais que a conveniência:
+
+1. O iframe carrega scripts e cookies de terceiro em **toda** visita, inclusive
+   a de quem só queria ver o preço. Entrega o passo do visitante a um terceiro
+   antes de ele pedir.
+2. O `venue` é texto livre digitado pelo organizador ("Cinemark Eldorado, São
+   Paulo"). O pino cairia no lugar errado com frequência — e um mapa errado é
+   pior que mapa nenhum, porque ele parece certo.
+3. Um mapa embutido custa cota de API por carregamento, num plano gratuito.
+
+O link resolve o mesmo problema real (chegar lá) sem nenhum dos três. É menos
+vistoso e mais honesto sobre o que o dado permite.
+
 ### Dia 7 — o limite de login cobrava do usuário certo
 
 A suíte de E2E começou a levar 429 no login. O primeiro impulso é afrouxar o

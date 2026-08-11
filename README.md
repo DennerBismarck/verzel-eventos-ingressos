@@ -80,9 +80,11 @@ Senha de **todos**: `verzel123`
 `python manage.py seed` é idempotente (rodar de novo não duplica).
 Use `--reset` para recriar do zero.
 
-Também cria **14 eventos** do organizador acima:
+Também cria **16 eventos** do organizador acima:
 
 - **10 de pista publicados** — um deles já esgotado, para exibir esse estado;
+- **2 sessões extras do mesmo filme**, em outros cinemas — é o que alimenta
+  "outros horários deste filme" na página do evento;
 - **1 em rascunho** — prova que a vitrine pública filtra por status;
 - **2 já encerrados** — alimentam a aba "Já aconteceram" do painel e mostram
   que a vitrine pública não anuncia sessão com data vencida;
@@ -137,6 +139,7 @@ Documentação interativa: **`/api/docs`** (Swagger UI, gerado do código via dr
 | GET/POST | `/api/organizer/events` | organizador | Lista/cria os eventos **do organizador logado** |
 | GET/PATCH/DELETE | `/api/organizer/events/{id}` | organizador | Só os próprios (id alheio devolve 404) |
 | GET | `/api/events/{id}/seats` | público | Mapa de assentos (livre/vendido, sem dizer de quem) |
+| GET | `/api/events/{id}/related` | público | Outras sessões do mesmo filme + o que mais está em cartaz |
 | GET/POST | `/api/organizer/events/{id}/seats` | organizador | Lê e (re)gera o mapa por seções |
 | GET/POST | `/api/reservations` | cliente | Lista/cria reserva (já segura o estoque) |
 | POST | `/api/reservations/{id}/pay` | cliente | Pagamento simulado; emite os ingressos |
@@ -145,6 +148,7 @@ Documentação interativa: **`/api/docs`** (Swagger UI, gerado do código via dr
 | GET | `/api/shared/{share_token}` | público | Ingresso compartilhado, **somente leitura** |
 | GET | `/api/gate/events` | portaria | Eventos selecionáveis na tela da portaria |
 | GET | `/api/organizer/events/{id}/sales` | organizador | Receita, ingressos validados e lista de compradores |
+| GET | `/api/organizer/summary` | organizador | Receita, ingressos e próximo evento somando TODOS os eventos |
 | POST | `/api/gate/validate` | portaria | Valida: `VALID`, `INVALID`, `ALREADY_USED`, `WRONG_EVENT` |
 
 **Pagamento simulado:** não há transação financeira. A regra é determinística —
@@ -210,7 +214,7 @@ dublê. Teste que depende de API de terceiro falha quando o terceiro cai, gasta
 cota a cada execução e não roda sem chave — deixa de ser teste e vira
 monitoramento.
 
-#### Ponta a ponta — 37 testes
+#### Ponta a ponta — 38 testes
 
 ```bash
 # em um terminal
