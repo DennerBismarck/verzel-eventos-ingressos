@@ -430,8 +430,13 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
               error={erros.price}
               placeholder="42.00"
             />
+            {/* "pessoas", e não "lugares": em pista ninguém tem lugar — é
+                justamente o que a opção acima promete ("entra quem chegar").
+                Pedir "capacidade (lugares)" logo abaixo dela contradizia a
+                escolha que o organizador tinha acabado de fazer. Lugar é
+                unidade do outro modo, onde cada ingresso é uma poltrona. */}
             <Field
-              label="Capacidade (lugares)"
+              label="Capacidade (pessoas)"
               name="capacity"
               type="number"
               min="1"
@@ -440,6 +445,7 @@ function Formulario({ item, onVoltar }: { item: CatalogItem; onVoltar: () => voi
               onChange={(e) => setCapacity(e.target.value)}
               error={erros.capacity}
               placeholder="120"
+              hint="Quantos ingressos existem para vender."
             />
           </div>
         ) : (
