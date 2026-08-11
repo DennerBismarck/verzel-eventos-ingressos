@@ -400,7 +400,9 @@ limitações conhecidas, declaradas de propósito.
   consultam a API externa a cada request. Em produção as duas chaves estão
   configuradas.
 
-- **O histórico de commits está concentrado.** O enunciado pede commits ao longo
-  da semana, e a maior parte deste projeto foi feita em poucas sessões longas.
-  As mensagens registram o processo — cada correção explica sintoma, causa e
-  decisão — mas as datas não espelham sete dias de trabalho espaçado.
+- **O trabalho ficou em quatro dias, não em sete.** De 08/08 a 11/08: sábado o
+  scaffold e o deploy, domingo o ajuste de CORS em produção, segunda o grosso
+  do projeto e terça o acabamento. A segunda responde por 47 dos 58 commits —
+  mas distribuídos das 08:38 às 20:08, cerca de um a cada quinze minutos, e não
+  empilhados num push só no fim do dia. O processo está no histórico: cada
+  correção tem um commit próprio explicando sintoma, causa e decisão.
