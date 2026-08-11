@@ -11,7 +11,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 
 import { EventCard, EventCardSkeleton } from "@/components/event-card";
 import { Alert, Button, EmptyState } from "@/components/ui";
@@ -56,21 +56,44 @@ function Vitrine() {
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
 
+  /**
+   * Número do pedido em curso.
+   *
+   * Sem isto, duas buscas no ar ao mesmo tempo entram numa corrida e QUEM
+   * RESPONDE POR ÚLTIMO vence — mesmo sendo a mais antiga. Foi visto no log do
+   * servidor: o pedido sem filtro voltou depois do `?kind=SEATED` e reescreveu
+   * a lista, deixando a tela com todos os eventos e o chip "Lugar marcado"
+   * marcado. Acontece sempre que se troca o filtro antes de a lista anterior
+   * chegar — trivial numa conexão de celular.
+   *
+   * useRef e não useState: mudar o número não pode disparar render, e o valor
+   * precisa ser lido DEPOIS do await, já com o valor mais recente.
+   */
+  const pedidoAtual = useRef(0);
+
   const carregar = useCallback(async () => {
+    const meuPedido = ++pedidoAtual.current;
     setCarregando(true);
     setErro(null);
     try {
       const busca = new URLSearchParams();
       if (q) busca.set("q", q);
       if (kind) busca.set("kind", kind);
-      setDados(await api<Page<PublicEvent>>(`/api/events?${busca}`));
+      const resposta = await api<Page<PublicEvent>>(`/api/events?${busca}`);
+      // Chegou tarde: outro pedido já saiu depois deste. Descartar é o certo —
+      // esta resposta descreve um filtro que não está mais na tela.
+      if (meuPedido !== pedidoAtual.current) return;
+      setDados(resposta);
     } catch {
+      if (meuPedido !== pedidoAtual.current) return;
       setErro(
         "Não conseguimos carregar os eventos. A API pode estar hibernando — " +
           "no plano gratuito, a primeira chamada leva até 50 segundos.",
       );
     } finally {
-      setCarregando(false);
+      // Só o pedido mais recente desliga o esqueleto. Senão, um pedido antigo
+      // que termina primeiro apagaria o "carregando" do que ainda está no ar.
+      if (meuPedido === pedidoAtual.current) setCarregando(false);
     }
   }, [q, kind]);
 
@@ -155,7 +178,11 @@ function Vitrine() {
         </EmptyState>
       )}
 
-      {!carregando && grade.length > 0 && (
+      {/* Sem `erro`: quando o recarregamento falha, mostrar a lista ANTERIOR
+          embaixo de "Falha ao carregar" é contradição pura — a tela exibe 12
+          eventos e diz que não conseguiu carregar. Pior: depois de trocar o
+          filtro, os cards visíveis são do filtro antigo. */}
+      {!carregando && !erro && grade.length > 0 && (
         <Grade>
           {grade.map((e) => (
             <EventCard key={e.id} event={e} />

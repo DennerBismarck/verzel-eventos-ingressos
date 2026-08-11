@@ -48,6 +48,26 @@ const STATUS: { valor: "" | EventStatus; rotulo: string }[] = [
   { valor: "DRAFT", rotulo: "Rascunhos" },
 ];
 
+/**
+ * Só o caminho da URL de paginação do DRF, descartando o host.
+ *
+ * O DRF devolve `next` absoluto, montado a partir do Host do request. Passar
+ * isso direto para `api()` teria dois problemas: a função prefixa a base e
+ * geraria uma URL dobrada, e — o que importa mais — ela manda o token de
+ * autenticação junto. Uma URL vinda do CORPO de uma resposta não pode decidir
+ * para qual host o token vai. Aproveitar só o caminho também imuniza contra o
+ * proxy da Render devolver `http://` num site servido por `https://`.
+ */
+function caminhoDe(url: string | null): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    return u.pathname + u.search;
+  } catch {
+    return url.startsWith("/") ? url : null;
+  }
+}
+
 export default function OrganizadorPage() {
   const { user, token, ready } = useAuth();
 
@@ -56,6 +76,9 @@ export default function OrganizadorPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [recarregando, setRecarregando] = useState(false);
+  const [proxima, setProxima] = useState<string | null>(null);
+  const pedidoAtual = useRef(0);
+  const [carregandoMais, setCarregandoMais] = useState(false);
 
   const [aba, setAba] = useState<Aba>("upcoming");
   const [status, setStatus] = useState<"" | EventStatus>("");
@@ -74,6 +97,11 @@ export default function OrganizadorPage() {
 
   const carregarLista = useCallback(async () => {
     if (!token) return;
+    // Mesma corrida da vitrine: trocar de aba ou de filtro antes de a lista
+    // anterior chegar deixa dois pedidos no ar, e o que RESPONDE por último
+    // vence — mesmo sendo o mais antigo. O resultado é a tela mostrando
+    // "Rascunhos" com eventos publicados dentro.
+    const meuPedido = ++pedidoAtual.current;
     setRecarregando(true);
     try {
       const busca = new URLSearchParams({
@@ -83,14 +111,43 @@ export default function OrganizadorPage() {
       if (status) busca.set("status", status);
 
       const r = await api<Page<OrganizerEvent>>(`/api/organizer/events?${busca}`, { token });
+      if (meuPedido !== pedidoAtual.current) return;
       setEventos(r.results);
+      setProxima(caminhoDe(r.next));
       setErro(null);
     } catch {
+      if (meuPedido !== pedidoAtual.current) return;
       setErro("Não conseguimos carregar seus eventos.");
     } finally {
-      setRecarregando(false);
+      if (meuPedido === pedidoAtual.current) setRecarregando(false);
     }
   }, [token, aba, status, ordem]);
+
+  /**
+   * A lista vem paginada de 12 em 12. Sem isto, o 13º evento simplesmente não
+   * existia na tela — e nada avisava. Um organizador com mais de 12 eventos
+   * concluiria que o rascunho lá do fim tinha sumido.
+   *
+   * Acumula em vez de trocar de página: a leitura aqui é uma rolagem só, e
+   * paginação numerada obrigaria a ir e voltar para comparar dois eventos.
+   */
+  async function carregarMais() {
+    if (!proxima || carregandoMais) return;
+    setCarregandoMais(true);
+    try {
+      const meuPedido = pedidoAtual.current;
+      const r = await api<Page<OrganizerEvent>>(proxima, { token });
+      // Se o filtro mudou enquanto a página 2 vinha, ela é de OUTRA lista —
+      // emendá-la na atual misturaria eventos de dois filtros diferentes.
+      if (meuPedido !== pedidoAtual.current) return;
+      setEventos((atual) => [...(atual ?? []), ...r.results]);
+      setProxima(caminhoDe(r.next));
+    } catch {
+      setErro("Não conseguimos carregar o restante da lista.");
+    } finally {
+      setCarregandoMais(false);
+    }
+  }
 
   useEffect(() => {
     void carregarResumo();
@@ -215,17 +272,31 @@ export default function OrganizadorPage() {
       )}
 
       {eventos && eventos.length > 0 && (
-        <div className={`space-y-3 transition-opacity ${recarregando ? "opacity-50" : ""}`}>
-          {eventos.map((ev) => (
-            <LinhaDoEvento
-              key={ev.id}
-              ev={ev}
-              passado={aba === "past"}
-              ocupado={ocupado === ev.id}
-              onPublicar={() => void alternarPublicacao(ev)}
-            />
-          ))}
-        </div>
+        <>
+          <div className={`space-y-3 transition-opacity ${recarregando ? "opacity-50" : ""}`}>
+            {eventos.map((ev) => (
+              <LinhaDoEvento
+                key={ev.id}
+                ev={ev}
+                passado={aba === "past"}
+                ocupado={ocupado === ev.id}
+                onPublicar={() => void alternarPublicacao(ev)}
+              />
+            ))}
+          </div>
+
+          {proxima && (
+            <div className="mt-4 text-center">
+              <Button
+                variant="secondary"
+                loading={carregandoMais}
+                onClick={() => void carregarMais()}
+              >
+                Mostrar mais eventos
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
