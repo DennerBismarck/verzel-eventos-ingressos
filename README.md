@@ -380,6 +380,14 @@ limitações conhecidas, declaradas de propósito.
   para ser reproduzível. Na suíte automática ficam a digitação manual e o
   comportamento quando a câmera falha.
 
+- **O catálogo externo pode ficar até 6 horas desatualizado.** É o preço
+  escolhido para que ninguém espere pelo TMDb: a cópia guardada é servida na
+  hora, mesmo vencida, e a atualização roda em segundo plano (só espera quem
+  chega quando não existe cópia alguma — 1,25s medidos, contra 0,001s com
+  cópia). O catálogo é *inspiração* para o organizador, e os dados são
+  **copiados** na criação do evento, então nada disso afeta evento já
+  publicado. Se o TMDb cair, a cópia continua sendo servida por até 7 dias.
+
 - **Cobertura da Ticketmaster no Brasil é fraca.** A Discovery API é
   majoritariamente EUA/Europa, então buscar por cidade brasileira costuma voltar
   vazio. Não é bug de integração — é o catálogo deles. Para demonstrar, busque
