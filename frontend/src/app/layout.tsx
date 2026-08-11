@@ -8,8 +8,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "ingressa — eventos, shows e filmes em cartaz",
-    template: "%s · ingressa",
+    default: "IngressaDR — eventos, shows e filmes em cartaz",
+    template: "%s · IngressaDR",
   },
   description:
     "Compre ingressos para shows e filmes em cartaz, com entrada por QR validado na portaria.",
@@ -40,7 +40,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
             <div className="mx-auto max-w-6xl px-4 py-8">
               <div className="flex flex-col gap-2 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
                 <p>
-                  <strong className="font-semibold text-ink">ingressa</strong> — projeto
+                  <strong className="font-semibold text-ink">IngressaDR</strong> — projeto
                   de demonstração. Nenhuma cobrança é real.
                 </p>
                 <p className="flex gap-4">

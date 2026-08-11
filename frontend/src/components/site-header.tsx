@@ -54,8 +54,11 @@ export function SiteHeader() {
           href="/"
           className="shrink-0 text-[15px] font-bold tracking-tight text-white"
         >
-          ingressa
-          <span className="text-accent">.</span>
+          {/* O laranja migrou do ponto final para o "DR". A marca já tinha um
+              detalhe em cor de destaque; manter os dois competiria pelo olho
+              no mesmo canto da tela. */}
+          Ingressa
+          <span className="text-accent">DR</span>
         </Link>
 
         {naPortaria && (
