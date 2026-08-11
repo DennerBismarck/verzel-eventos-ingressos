@@ -6,7 +6,20 @@ cliente compra ingressos com QR, portaria valida na entrada.
 > **Status:** escopo completo e publicado — vitrine, compra por pista **e por
 > lugar marcado**, ingresso com QR assinado, compartilhamento por link e
 > validação na portaria.
-> Planejamento em [`docs/PLANNING.md`](docs/PLANNING.md), decisões em [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
+**Se você tem cinco minutos:** [as decisões técnicas](#decisões-técnicas) e
+[o que não funciona como esperado](#o-que-faltou--não-funciona-como-esperado).
+São as duas seções que dizem mais sobre o projeto do que a lista de recursos.
+
+| | |
+|---|---|
+| [Stack](#stack) · [Como rodar](#como-rodar) · [Telas](#telas) | Para pôr de pé |
+| [Dados de teste](#dados-de-teste-seed) · [API](#api) | Para explorar |
+| [Segurança](#segurança) · [Testes](#testes) · [Deploy](#deploy) | Como foi construído |
+| [Decisões técnicas](#decisões-técnicas) · [Uso de IA](#uso-de-ia) · [O que faltou](#o-que-faltou--não-funciona-como-esperado) | Por que foi construído assim |
+
+Documentação completa em [`docs/`](docs/) — decisões, roteiro de defesa e os
+registros de planejamento do primeiro dia.
 
 ## Stack
 - **Front-end:** Next.js 16 (App Router, React 19, TypeScript, Tailwind 4)

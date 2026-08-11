@@ -1,5 +1,17 @@
 # Planejamento — Plataforma de Eventos e Ingressos (Desafio Verzel)
 
+> ⚠️ **Documento do dia 0, mantido como está de propósito.** É o plano que eu
+> tracei antes de começar, não o relato do que aconteceu. Guardo porque a
+> distância entre os dois é informação: mostra o que eu previ, o que errei e o
+> que precisei mudar no meio.
+>
+> **O que mudou:** o modo de trabalho abaixo diz que eu escreveria o núcleo e a
+> IA ficaria no boilerplate. Não foi o que aconteceu — faltou tempo e eu passei
+> a dirigir as decisões enquanto a IA escrevia o código. Quem manda nesse
+> assunto é a seção **"Uso de IA"** do [README](../README.md), que descreve o
+> arranjo real. O cronograma de 7 dias também não se cumpriu como escrito:
+> foram 4 dias, com um deles concentrando o grosso.
+
 > Stack: **Django REST Framework (Python) + Next.js (React) + PostgreSQL**
 > Reserva: **pista (quantidade) primeiro, mapa de assentos depois**
 > Modo de trabalho: **par** — Denner escreve o núcleo; IA no boilerplate; tudo explicado pra defender.

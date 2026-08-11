@@ -1,5 +1,13 @@
 # Prompt para iniciar a sessão de construção (copie tudo abaixo)
 
+> ⚠️ **Registro do dia 0.** É o prompt com que abri a sessão de trabalho,
+> guardado inalterado — está aqui como artefato de processo, não como descrição
+> do que aconteceu.
+>
+> **O que mudou:** o texto abaixo estabelece que EU escreveria o núcleo e a IA
+> ficaria no boilerplate. Na prática o arranjo virou outro no meio do caminho.
+> A descrição fiel está na seção **"Uso de IA"** do [README](../README.md).
+
 ---
 
 Você é meu parceiro de programação (pair programming) num desafio técnico de 7 dias que eu PRECISO
